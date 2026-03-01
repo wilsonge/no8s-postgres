@@ -82,7 +82,7 @@ jobs:
           print("Generated terraform.tfvars.json:")
           print(json.dumps(tfvars, indent=2))
           EOF
-        working-directory: src/no8s_postgres/terraform/templates
+        working-directory: terraform
 
       - name: Terraform Init
         run: |
@@ -91,7 +91,7 @@ jobs:
             -backend-config="key=${TF_STATE_KEY}" \
             -backend-config="region=${{ secrets.AWS_REGION || 'eu-west-1' }}" \
             -backend-config="dynamodb_table=${{ secrets.TF_STATE_DYNAMODB_TABLE || 'terraform-locks' }}"
-        working-directory: src/no8s_postgres/terraform/templates
+        working-directory: terraform
 
       - name: Terraform Plan
         if: inputs.action == 'plan'
@@ -99,27 +99,27 @@ jobs:
         # fail the workflow step itself (the reconciler reads the conclusion).
         run: |
           terraform plan -detailed-exitcode -out=tfplan || true
-        working-directory: src/no8s_postgres/terraform/templates
+        working-directory: terraform
 
       - name: Terraform Apply
         if: inputs.action == 'apply'
         run: terraform apply -auto-approve
-        working-directory: src/no8s_postgres/terraform/templates
+        working-directory: terraform
 
       - name: Capture Terraform Outputs
         if: inputs.action == 'apply'
         run: terraform output -json > terraform-outputs.json
-        working-directory: src/no8s_postgres/terraform/templates
+        working-directory: terraform
 
       - name: Upload Terraform Outputs Artifact
         if: inputs.action == 'apply'
         uses: actions/upload-artifact@v4
         with:
           name: terraform-outputs
-          path: src/no8s_postgres/terraform/templates/terraform-outputs.json
+          path: terraform/terraform-outputs.json
           retention-days: 1
 
       - name: Terraform Destroy
         if: inputs.action == 'destroy'
         run: terraform destroy -auto-approve
-        working-directory: src/no8s_postgres/terraform/templates
+        working-directory: terraform
