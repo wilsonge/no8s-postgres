@@ -1,0 +1,23 @@
+# /etc/pgbackrest/pgbackrest.conf — managed by no8s-postgres Ansible
+# Regenerated on every reconcile run; do not edit manually.
+
+[global]
+# S3 repository — uses the EC2 instance profile credentials (no explicit keys).
+repo1-type=s3
+repo1-s3-bucket={{ tf_state_bucket | default('') }}
+repo1-s3-region={{ aws_region | default('eu-west-1') }}
+repo1-s3-key-type=auto
+repo1-path=/pgbackrest/{{ cluster_name }}
+
+# Retention
+repo1-retention-full={{ backup_retention_days | default(7) }}
+repo1-retention-full-type=count
+
+# Logging
+log-level-console=info
+log-level-file=detail
+log-path=/var/log/pgbackrest
+
+[{{ cluster_name }}]
+pg1-path=/var/lib/postgresql/data/patroni
+pg1-user=postgres

@@ -1,0 +1,2 @@
+---
+# PostgreSQL is managed by Patroni; no direct service handlers needed.

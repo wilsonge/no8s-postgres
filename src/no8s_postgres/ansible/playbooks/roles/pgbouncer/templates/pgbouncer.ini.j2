@@ -1,0 +1,26 @@
+; /etc/pgbouncer/pgbouncer.ini — managed by no8s-postgres Ansible
+; Regenerated on every reconcile run; do not edit manually.
+
+[databases]
+; Wildcard: proxy any database to the local PostgreSQL (Patroni manages failover).
+* = host=127.0.0.1 port=5432
+
+[pgbouncer]
+listen_port = 6432
+listen_addr = 0.0.0.0
+auth_type = md5
+auth_file = /etc/pgbouncer/userlist.txt
+
+; Use transaction pooling for application connections.
+pool_mode = transaction
+max_client_conn = 1000
+default_pool_size = {{ pgbouncer_pool_size | default(20) }}
+
+server_reset_query = DISCARD ALL
+server_check_query = SELECT 1
+server_check_delay = 10
+
+; Reduce log noise.
+log_connections = 0
+log_disconnections = 0
+log_pooler_errors = 1

@@ -1,0 +1,30 @@
+---
+- name: Install PgBouncer
+  ansible.builtin.apt:
+    name: pgbouncer
+    state: present
+
+- name: Write PgBouncer configuration
+  ansible.builtin.template:
+    src: pgbouncer.ini.j2
+    dest: /etc/pgbouncer/pgbouncer.ini
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: Restart PgBouncer
+
+- name: Write PgBouncer userlist
+  ansible.builtin.copy:
+    dest: /etc/pgbouncer/userlist.txt
+    owner: postgres
+    group: postgres
+    mode: "0640"
+    content: |
+      "postgres" "{{ patroni_superuser_password }}"
+  notify: Restart PgBouncer
+
+- name: Enable and start PgBouncer
+  ansible.builtin.systemd:
+    name: pgbouncer
+    state: started
+    enabled: true

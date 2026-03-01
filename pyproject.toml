@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "no8s-postgres"
+version = "0.1.0"
+description = "HA PostgreSQL cluster reconciler plugin for no8s-operator"
+requires-python = ">=3.11"
+dependencies = [
+    "no8s-operator",
+    "jinja2",
+    "httpx",
+    "boto3",
+    "ansible-core",
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "black",
+    "flake8",
+]
+
+[project.entry-points.'no8s.reconcilers']
+postgres_cluster = 'no8s_postgres.reconciler:PostgresClusterReconciler'
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.package-data]
+"no8s_postgres" = [
+    "ansible/playbooks/*.yml",
+    "ansible/playbooks/roles/*/tasks/*.yml",
+    "ansible/playbooks/roles/*/handlers/*.yml",
+    "ansible/playbooks/roles/*/templates/*.j2",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

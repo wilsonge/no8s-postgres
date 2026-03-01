@@ -1,0 +1,40 @@
+---
+- name: Install etcd
+  ansible.builtin.apt:
+    name: etcd
+    state: present
+
+- name: Check if etcd data directory already exists (idempotency guard)
+  ansible.builtin.stat:
+    path: /var/lib/etcd/member
+  register: etcd_member_dir
+
+- name: Configure etcd
+  ansible.builtin.template:
+    src: etcd.env.j2
+    dest: /etc/default/etcd
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    # Use 'existing' if etcd has already bootstrapped; 'new' on first run.
+    etcd_initial_cluster_state: "{{ 'existing' if etcd_member_dir.stat.exists else 'new' }}"
+  notify: Restart etcd
+
+- name: Enable and start etcd
+  ansible.builtin.systemd:
+    name: etcd
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for etcd to be healthy
+  ansible.builtin.command:
+    cmd: etcdctl endpoint health --endpoints=http://{{ ansible_host }}:2379
+  environment:
+    ETCDCTL_API: "3"
+  register: etcd_health
+  retries: 15
+  delay: 5
+  until: etcd_health.rc == 0
+  changed_when: false

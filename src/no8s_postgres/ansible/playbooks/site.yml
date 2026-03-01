@@ -1,0 +1,52 @@
+---
+# Main playbook — configures a Patroni HA PostgreSQL cluster.
+#
+# Host groups provided by the amazon.aws.aws_ec2 inventory plugin:
+#   postgres_nodes   — all cluster EC2 instances
+#   patroni_primary  — the initial primary (NodeIndex=0)
+#   patroni_replicas — replica nodes (NodeIndex>0)
+#
+# Extra-vars injected by the reconciler (from the PostgresCluster spec):
+#   postgres_version, cluster_name, cluster_size, db_name, db_user,
+#   pgbouncer_enabled, pgbouncer_pool_size, backup_enabled,
+#   backup_retention_days, region, ssh_key_name, tags, …
+
+- name: Configure PostgreSQL HA cluster nodes
+  hosts: postgres_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    # Provide sensible defaults so the playbook can run in isolation.
+    postgres_version: "{{ postgres_version | default('16') }}"
+    cluster_name: "{{ cluster_name | default('postgres') }}"
+    pgbouncer_enabled: "{{ pgbouncer_enabled | default(true) | bool }}"
+    backup_enabled: "{{ backup_enabled | default(true) | bool }}"
+    pgbouncer_pool_size: "{{ pgbouncer_pool_size | default(20) | int }}"
+    backup_retention_days: "{{ backup_retention_days | default(7) | int }}"
+    aws_region: "{{ region | default('eu-west-1') }}"
+
+    # Patroni passwords are generated once on the Ansible controller and
+    # cached in /var/tmp so they survive subsequent reconcile runs.
+    patroni_superuser_password: >-
+      {{ lookup('ansible.builtin.password',
+           '/var/tmp/no8s-' + cluster_name + '-superuser
+           length=24 chars=ascii_letters,digits') }}
+    patroni_replication_password: >-
+      {{ lookup('ansible.builtin.password',
+           '/var/tmp/no8s-' + cluster_name + '-replication
+           length=24 chars=ascii_letters,digits') }}
+    patroni_rewind_password: >-
+      {{ lookup('ansible.builtin.password',
+           '/var/tmp/no8s-' + cluster_name + '-rewind
+           length=24 chars=ascii_letters,digits') }}
+
+  roles:
+    - common
+    - etcd
+    - postgresql
+    - patroni
+    - role: pgbouncer
+      when: pgbouncer_enabled | bool
+    - role: pgbackrest
+      when: backup_enabled | bool

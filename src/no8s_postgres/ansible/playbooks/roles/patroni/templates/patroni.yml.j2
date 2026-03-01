@@ -1,0 +1,86 @@
+# /etc/patroni/patroni.yml — managed by no8s-postgres Ansible
+# Regenerated on every reconcile run; do not edit manually.
+
+scope: {{ cluster_name }}
+namespace: /no8s/
+name: {{ ansible_host }}
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: {{ ansible_host }}:8008
+
+etcd3:
+  # All cluster nodes run etcd; build the hosts list from the inventory group.
+  hosts: "{{ groups['postgres_nodes'] | map('extract', hostvars, 'ansible_host') | map('regex_replace', '^(.+)$', '\\1:2379') | join(',') }}"
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 30
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: 200
+        shared_buffers: 256MB
+        effective_cache_size: 768MB
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_log_hints: "on"
+        checkpoint_completion_target: 0.9
+        default_statistics_target: 100
+        random_page_cost: 1.1
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  pg_hba:
+    - local all all trust
+    - host replication replicator 0.0.0.0/0 md5
+    - host all all 0.0.0.0/0 md5
+
+  users:
+    postgres:
+      password: "{{ patroni_superuser_password }}"
+      options:
+        - superuser
+    replicator:
+      password: "{{ patroni_replication_password }}"
+      options:
+        - replication
+    rewind_user:
+      password: "{{ patroni_rewind_password }}"
+      options:
+        - login
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: {{ ansible_host }}:5432
+  data_dir: /var/lib/postgresql/data/patroni
+  bin_dir: /usr/lib/postgresql/{{ postgres_version }}/bin
+  pgpass: /var/lib/postgresql/.pgpass
+
+  authentication:
+    replication:
+      username: replicator
+      password: "{{ patroni_replication_password }}"
+    superuser:
+      username: postgres
+      password: "{{ patroni_superuser_password }}"
+    rewind:
+      username: rewind_user
+      password: "{{ patroni_rewind_password }}"
+
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

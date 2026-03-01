@@ -1,0 +1,125 @@
+name: Terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action to run"
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      cluster_name:
+        description: "PostgresCluster resource name (used as state key prefix)"
+        required: true
+        type: string
+      resource_id:
+        description: "no8s resource ID (for traceability)"
+        required: true
+        type: string
+      spec_json:
+        description: "PostgresCluster spec serialised as JSON"
+        required: true
+        type: string
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+jobs:
+  terraform:
+    name: "Terraform ${{ inputs.action }} — ${{ inputs.cluster_name }}"
+    runs-on: ubuntu-latest
+
+    env:
+      TF_STATE_KEY: "no8s-postgres/${{ inputs.cluster_name }}/terraform.tfstate"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || 'eu-west-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Generate Terraform variables from spec
+        env:
+          SPEC_JSON: ${{ inputs.spec_json }}
+          CLUSTER_NAME: ${{ inputs.cluster_name }}
+        run: |
+          python3 << 'EOF'
+          import json, os
+
+          spec = json.loads(os.environ["SPEC_JSON"])
+          cluster_name = os.environ["CLUSTER_NAME"]
+
+          tfvars = {
+            "cluster_name":     cluster_name,
+            "aws_region":       spec.get("region", "eu-west-1"),
+            "cluster_size":     spec.get("cluster_size", 3),
+            "instance_type":    spec.get("instance_type", "t3.medium"),
+            "postgres_version": str(spec.get("postgres_version", "16")),
+            "volume_size_gb":   spec.get("volume_size_gb", 100),
+            "volume_type":      spec.get("volume_type", "gp3"),
+            "vpc_cidr":         spec.get("vpc_cidr", "10.0.0.0/16"),
+            "allowed_cidrs":    spec.get("allowed_cidrs", []),
+            "ssh_key_name":     spec.get("ssh_key_name", ""),
+            "tags":             spec.get("tags", {}),
+          }
+
+          with open("terraform.tfvars.json", "w") as f:
+            json.dump(tfvars, f, indent=2)
+
+          print("Generated terraform.tfvars.json:")
+          print(json.dumps(tfvars, indent=2))
+          EOF
+        working-directory: src/no8s_postgres/terraform/templates
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${{ secrets.AWS_REGION || 'eu-west-1' }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_STATE_DYNAMODB_TABLE || 'terraform-locks' }}"
+        working-directory: src/no8s_postgres/terraform/templates
+
+      - name: Terraform Plan
+        if: inputs.action == 'plan'
+        # Exit code 2 means changes are pending — we record this but do not
+        # fail the workflow step itself (the reconciler reads the conclusion).
+        run: |
+          terraform plan -detailed-exitcode -out=tfplan || true
+        working-directory: src/no8s_postgres/terraform/templates
+
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        run: terraform apply -auto-approve
+        working-directory: src/no8s_postgres/terraform/templates
+
+      - name: Capture Terraform Outputs
+        if: inputs.action == 'apply'
+        run: terraform output -json > terraform-outputs.json
+        working-directory: src/no8s_postgres/terraform/templates
+
+      - name: Upload Terraform Outputs Artifact
+        if: inputs.action == 'apply'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs
+          path: src/no8s_postgres/terraform/templates/terraform-outputs.json
+          retention-days: 1
+
+      - name: Terraform Destroy
+        if: inputs.action == 'destroy'
+        run: terraform destroy -auto-approve
+        working-directory: src/no8s_postgres/terraform/templates

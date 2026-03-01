@@ -1,0 +1,45 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install common packages
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-pip
+      - python3-psycopg2
+      - curl
+      - wget
+      - chrony
+      - sysstat
+      - acl
+      - ca-certificates
+      - gnupg
+      - lsb-release
+    state: present
+
+- name: Set sysctl parameters for PostgreSQL
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_set: true
+    reload: true
+  loop:
+    - { key: vm.overcommit_memory, value: "2" }
+    - { key: vm.swappiness, value: "1" }
+    - { key: vm.dirty_ratio, value: "10" }
+    - { key: vm.dirty_background_ratio, value: "3" }
+    - { key: net.core.somaxconn, value: "65535" }
+    - { key: net.ipv4.tcp_max_syn_backlog, value: "65535" }
+    - { key: net.ipv4.tcp_keepalive_time, value: "300" }
+    - { key: net.ipv4.tcp_keepalive_intvl, value: "30" }
+    - { key: net.ipv4.tcp_keepalive_probes, value: "3" }
+
+- name: Start and enable chrony
+  ansible.builtin.systemd:
+    name: chrony
+    state: started
+    enabled: true
