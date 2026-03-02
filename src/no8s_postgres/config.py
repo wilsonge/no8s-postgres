@@ -1,7 +1,10 @@
-"""Configuration dataclass for no8s-postgres, loaded from env vars and plugin_config."""
+"""Configuration dataclass for no8s-postgres.
+
+Loaded from env vars and plugin_config.
+"""
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 
@@ -23,10 +26,12 @@ class PostgresConfig:
     def from_env_and_plugin_config(
         cls, plugin_config: Optional[dict] = None
     ) -> "PostgresConfig":
-        """Build config from environment variables, optionally overridden by plugin_config."""
+        """Build config from env vars, overridden by plugin_config."""
         cfg = plugin_config or {}
         return cls(
-            aws_region=cfg.get("aws_region", os.environ.get("AWS_REGION", "eu-west-1")),
+            aws_region=cfg.get(
+                "aws_region", os.environ.get("AWS_REGION", "eu-west-1")
+            ),
             tf_state_bucket=cfg.get(
                 "tf_state_bucket", os.environ.get("TF_STATE_BUCKET", "")
             ),
@@ -43,11 +48,15 @@ class PostgresConfig:
                 os.environ.get("SSH_PRIVATE_KEY_PATH", ""),
             ),
             ansible_timeout=int(
-                cfg.get("ansible_timeout", os.environ.get("ANSIBLE_TIMEOUT", 30))
+                cfg.get(
+                    "ansible_timeout",
+                    os.environ.get("ANSIBLE_TIMEOUT", 30),
+                )
             ),
             cluster_init_timeout=int(
                 cfg.get(
-                    "cluster_init_timeout", os.environ.get("CLUSTER_INIT_TIMEOUT", 300)
+                    "cluster_init_timeout",
+                    os.environ.get("CLUSTER_INIT_TIMEOUT", 300),
                 )
             ),
             reconcile_poll_interval=int(
@@ -56,9 +65,14 @@ class PostgresConfig:
                     os.environ.get("RECONCILE_POLL_INTERVAL", 30),
                 )
             ),
-            github_repo=cfg.get("github_repo", os.environ.get("GITHUB_REPO", "")),
-            github_ref=cfg.get("github_ref", os.environ.get("GITHUB_REF", "main")),
+            github_repo=cfg.get(
+                "github_repo", os.environ.get("GITHUB_REPO", "")
+            ),
+            github_ref=cfg.get(
+                "github_ref", os.environ.get("GITHUB_REF", "main")
+            ),
             github_workflow=cfg.get(
-                "github_workflow", os.environ.get("GITHUB_WORKFLOW", "terraform.yml")
+                "github_workflow",
+                os.environ.get("GITHUB_WORKFLOW", "terraform.yml"),
             ),
         )

@@ -1,4 +1,4 @@
-"""Temporary workspace lifecycle management for per-reconcile Terraform/Ansible work."""
+"""Temporary workspace lifecycle management for per-reconcile work."""
 
 import shutil
 import tempfile
@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 class ReconcileWorkspace:
-    """Async context manager that creates and cleans up a temporary working directory."""
+    """Async context manager that creates and cleans up a temp directory."""
 
     def __init__(self) -> None:
         self.workspace_dir: Path = Path()

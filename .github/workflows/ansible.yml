@@ -1,0 +1,111 @@
+name: Ansible
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: "PostgresCluster resource name (matches ClusterName EC2 tag)"
+        required: true
+        type: string
+      resource_id:
+        description: "no8s resource ID (for traceability)"
+        required: true
+        type: string
+      spec_json:
+        description: "PostgresCluster spec serialised as JSON"
+        required: true
+        type: string
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+jobs:
+  ansible:
+    name: "Ansible — ${{ inputs.cluster_name }}"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || 'eu-west-1' }}
+
+      - name: Install Ansible and AWS SDK
+        run: pip install ansible-core boto3
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r ansible/playbooks/requirements.yml
+
+      - name: Write SSH private key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/no8s_postgres
+          chmod 600 ~/.ssh/no8s_postgres
+
+      - name: Generate EC2 inventory
+        env:
+          SPEC_JSON: ${{ inputs.spec_json }}
+          CLUSTER_NAME: ${{ inputs.cluster_name }}
+        run: |
+          python3 << 'EOF'
+          import json, os
+          import yaml
+
+          spec = json.loads(os.environ["SPEC_JSON"])
+          cluster_name = os.environ["CLUSTER_NAME"]
+          region = spec.get("region", "eu-west-1")
+          ansible_timeout = spec.get("ansible_timeout", 30)
+
+          inventory = {
+              "plugin": "amazon.aws.aws_ec2",
+              "regions": [region],
+              "filters": {
+                  "tag:ClusterName": cluster_name,
+                  "instance-state-name": "running",
+              },
+              "hostnames": ["public_ip_address"],
+              "compose": {
+                  "ansible_host": "public_ip_address",
+                  "ansible_user": '"ubuntu"',
+                  "ansible_ssh_common_args": (
+                      f'"-o StrictHostKeyChecking=no -o ConnectTimeout={ansible_timeout}"'
+                  ),
+                  "ansible_ssh_private_key_file": '"~/.ssh/no8s_postgres"',
+                  "node_index": "tags['NodeIndex'] | int",
+                  "cluster_name": "tags['ClusterName']",
+              },
+              "groups": {
+                  "patroni_primary": "tags.get('NodeIndex', '999') == '0'",
+                  "patroni_replicas": "tags.get('NodeIndex', '999') != '0'",
+                  "postgres_nodes": "'ClusterName' in tags",
+              },
+          }
+
+          with open("aws_ec2.yml", "w") as f:
+              yaml.dump(inventory, f, default_flow_style=False, allow_unicode=True)
+
+          print("Generated aws_ec2.yml for cluster:", cluster_name)
+          EOF
+
+      - name: Run Ansible playbook
+        env:
+          SPEC_JSON: ${{ inputs.spec_json }}
+          CLUSTER_NAME: ${{ inputs.cluster_name }}
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+          ANSIBLE_NOCOWS: "1"
+          ANSIBLE_RETRY_FILES_ENABLED: "False"
+        run: |
+          EXTRA_VARS=$(python3 -c "
+          import json, os, sys
+          spec = json.loads(os.environ['SPEC_JSON'])
+          spec['cluster_name'] = os.environ['CLUSTER_NAME']
+          print(json.dumps(spec))
+          ")
+          ansible-playbook ansible/playbooks/site.yml \
+            -i aws_ec2.yml \
+            --extra-vars "${EXTRA_VARS}"

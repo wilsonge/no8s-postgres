@@ -12,7 +12,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -43,7 +42,9 @@ class _ReconcilerContext:
 
     shutdown_event: asyncio.Event
 
-    async def get_resources_needing_reconciliation(self, resource_type_names, limit=10):
+    async def get_resources_needing_reconciliation(
+        self, resource_type_names, limit=10
+    ):
         raise NotImplementedError
 
     async def update_status(
@@ -73,6 +74,17 @@ class _ReconcilerContext:
     async def hard_delete_resource(self, resource_id):
         raise NotImplementedError
 
+    async def set_condition(
+        self,
+        resource_id,
+        condition_type,
+        status,
+        reason,
+        message="",
+        observed_generation=None,
+    ):
+        raise NotImplementedError
+
 
 class _ReconcilerPlugin(ABC):
     @property
@@ -90,7 +102,9 @@ class _ReconcilerPlugin(ABC):
         pass
 
     @abstractmethod
-    async def reconcile(self, resource: Dict[str, Any], ctx: _ReconcilerContext):
+    async def reconcile(
+        self, resource: Dict[str, Any], ctx: _ReconcilerContext
+    ):
         pass
 
     @abstractmethod
@@ -135,6 +149,7 @@ class MockReconcilerContext(_ReconcilerContext):
         self._hard_deleted: List[int] = []
         self._resources: List[Dict[str, Any]] = []
         self._action_plugins: Dict[str, Any] = {}
+        self.conditions: List[Dict[str, Any]] = []
 
     async def get_resources_needing_reconciliation(
         self, resource_type_names: List[str], limit: int = 10
@@ -189,6 +204,26 @@ class MockReconcilerContext(_ReconcilerContext):
     async def hard_delete_resource(self, resource_id: int) -> bool:
         self._hard_deleted.append(resource_id)
         return True
+
+    async def set_condition(
+        self,
+        resource_id: int,
+        condition_type: str,
+        status: str,
+        reason: str,
+        message: str = "",
+        observed_generation: Optional[int] = None,
+    ) -> None:
+        self.conditions.append(
+            {
+                "resource_id": resource_id,
+                "type": condition_type,
+                "status": status,
+                "reason": reason,
+                "message": message,
+                "observed_generation": observed_generation,
+            }
+        )
 
 
 # ---------------------------------------------------------------------------

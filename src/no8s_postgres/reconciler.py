@@ -1,4 +1,4 @@
-"""PostgresClusterReconciler — ReconcilerPlugin implementation for no8s-operator."""
+"""PostgresClusterReconciler — ReconcilerPlugin impl for no8s-operator."""
 
 import asyncio
 import json
@@ -14,8 +14,6 @@ from plugins.reconcilers.base import (
     ReconcileResult,
 )
 
-from no8s_postgres.ansible.inventory import InventoryBuilder
-from no8s_postgres.ansible.runner import AnsibleRunner
 from no8s_postgres.cluster.health import HealthChecker
 from no8s_postgres.cluster.initialiser import ClusterInitialiser
 from no8s_postgres.config import PostgresConfig
@@ -25,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _FINALIZER = "no8s-postgres"
 _TERRAFORM_OUTPUTS_ARTIFACT = "terraform-outputs"
+_ANSIBLE_WORKFLOW_FILE = "ansible.yml"
 
 
 def _trigger_reason(resource: Dict[str, Any]) -> str:
@@ -47,8 +46,19 @@ def _workflow_inputs(action: str, resource: Dict[str, Any]) -> dict:
     }
 
 
+def _ansible_workflow_inputs(resource: Dict[str, Any]) -> dict:
+    return {
+        "cluster_name": resource["name"],
+        "resource_id": str(resource["id"]),
+        "spec_json": json.dumps(resource.get("spec", {})),
+    }
+
+
 def _make_action_ctx(
-    action: str, resource: Dict[str, Any], config: PostgresConfig
+    resource: Dict[str, Any],
+    config: PostgresConfig,
+    workflow: str,
+    inputs: dict,
 ) -> ActionContext:
     """Build an ActionContext for the github_actions plugin."""
     owner, _, repo = config.github_repo.partition("/")
@@ -59,9 +69,9 @@ def _make_action_ctx(
         spec={
             "owner": owner,
             "repo": repo,
-            "workflow": config.github_workflow,
+            "workflow": workflow,
             "ref": config.github_ref,
-            "inputs": _workflow_inputs(action, resource),
+            "inputs": inputs,
         },
         spec_hash=resource.get("spec_hash", ""),
     )
@@ -73,9 +83,33 @@ async def _run_terraform(
     config: PostgresConfig,
     ctx: ReconcilerContext,
 ):
-    """Trigger a Terraform workflow via the operator's github_actions plugin and poll to completion."""
+    """Trigger a Terraform workflow via the github_actions plugin."""
     plugin = await ctx.get_action_plugin("github_actions")
-    action_ctx = _make_action_ctx(action, resource, config)
+    action_ctx = _make_action_ctx(
+        resource,
+        config,
+        config.github_workflow,
+        _workflow_inputs(action, resource),
+    )
+    workspace = await plugin.prepare(action_ctx)
+    result = await plugin.apply(action_ctx, workspace)
+    await plugin.cleanup(workspace)
+    return result
+
+
+async def _run_ansible(
+    resource: Dict[str, Any],
+    config: PostgresConfig,
+    ctx: ReconcilerContext,
+):
+    """Trigger the Ansible workflow via the github_actions plugin."""
+    plugin = await ctx.get_action_plugin("github_actions")
+    action_ctx = _make_action_ctx(
+        resource,
+        config,
+        _ANSIBLE_WORKFLOW_FILE,
+        _ansible_workflow_inputs(resource),
+    )
     workspace = await plugin.prepare(action_ctx)
     result = await plugin.apply(action_ctx, workspace)
     await plugin.cleanup(workspace)
@@ -83,10 +117,10 @@ async def _run_terraform(
 
 
 class PostgresClusterReconciler(ReconcilerPlugin):
-    """Reconciler plugin that provisions and manages HA PostgreSQL clusters on EC2.
+    """Reconciler plugin that provisions and manages HA PostgreSQL clusters.
 
     Infrastructure (EC2, networking, EBS) is provisioned via a GitHub Actions
-    Terraform workflow dispatched through the operator's built-in github_actions
+    Terraform workflow dispatched via the operator's built-in github_actions
     action plugin. Ansible and Patroni are managed directly.
     """
 
@@ -106,7 +140,7 @@ class PostgresClusterReconciler(ReconcilerPlugin):
         return self._resource_types
 
     async def start(self, ctx: ReconcilerContext) -> None:
-        """Run the reconciliation poll loop until the shutdown event is set."""
+        """Run the reconciliation poll loop until shutdown event is set."""
         self._running = True
         logger.info("PostgresClusterReconciler starting")
 
@@ -161,16 +195,15 @@ class PostgresClusterReconciler(ReconcilerPlugin):
 
         # Stage 2: Drift detection
         needs_apply = generation != observed_generation
-        drift_detected = False
 
         if not needs_apply and status == "ready":
-            # Infrastructure drift — trigger a Terraform plan via the GHA plugin
+            # Infrastructure drift — trigger a Terraform plan via GHA
             plan_result = await _run_terraform("plan", resource, config, ctx)
             if not plan_result.success:
                 needs_apply = True
-                drift_detected = True
                 logger.info(
-                    "Infrastructure drift detected for resource %d", resource_id
+                    "Infrastructure drift detected for resource %d",
+                    resource_id,
                 )
 
             # Operational drift — Patroni health check
@@ -178,14 +211,32 @@ class PostgresClusterReconciler(ReconcilerPlugin):
                 patroni_endpoints = resource.get("outputs", {}).get(
                     "patroni_endpoints", []
                 )
-                health_result = await HealthChecker(config).check(patroni_endpoints)
+                health_result = await HealthChecker(config).check(
+                    patroni_endpoints
+                )
                 if health_result.has_drift:
                     needs_apply = True
-                    drift_detected = True
+                    await ctx.set_condition(
+                        resource_id,
+                        "ClusterHealthy",
+                        "False",
+                        "HealthDriftDetected",
+                        health_result.drift_details or "Cluster health drift detected",
+                        observed_generation=generation,
+                    )
                     logger.info(
                         "Cluster health drift detected for resource %d: %s",
                         resource_id,
                         health_result.drift_details,
+                    )
+                else:
+                    await ctx.set_condition(
+                        resource_id,
+                        "ClusterHealthy",
+                        "True",
+                        "HealthCheckPassed",
+                        "All Patroni nodes healthy",
+                        observed_generation=generation,
                     )
 
         if not needs_apply:
@@ -199,27 +250,70 @@ class PostgresClusterReconciler(ReconcilerPlugin):
         try:
             apply_result = await _run_terraform("apply", resource, config, ctx)
             if not apply_result.success:
-                raise RuntimeError(
-                    f"Terraform apply workflow failed: {apply_result.error_message}"
+                await ctx.set_condition(
+                    resource_id,
+                    "InfrastructureProvisioned",
+                    "False",
+                    "TerraformFailed",
+                    apply_result.error_message or "",
+                    observed_generation=generation,
                 )
+                raise RuntimeError(
+                    "Terraform apply workflow failed: "
+                    f"{apply_result.error_message}"
+                )
+
+            await ctx.set_condition(
+                resource_id,
+                "InfrastructureProvisioned",
+                "True",
+                "TerraformApplied",
+                "Terraform apply succeeded",
+                observed_generation=generation,
+            )
 
             # Download terraform outputs from the artifact
             token = os.environ.get("GITHUB_TOKEN", "")
             artifacts = apply_result.outputs.get("artifacts", [])
             tf_artifact = next(
-                (a for a in artifacts if a["name"] == _TERRAFORM_OUTPUTS_ARTIFACT),
+                (
+                    a
+                    for a in artifacts
+                    if a["name"] == _TERRAFORM_OUTPUTS_ARTIFACT
+                ),
                 None,
             )
             if not tf_artifact:
                 raise RuntimeError(
-                    f"Artifact '{_TERRAFORM_OUTPUTS_ARTIFACT}' not found in workflow outputs"
+                    f"Artifact '{_TERRAFORM_OUTPUTS_ARTIFACT}' not found"
+                    " in workflow outputs"
                 )
             outputs = await download_artifact_content(
                 tf_artifact["archive_download_url"], token
             )
 
-            inventory_path = InventoryBuilder().build(outputs, config)
-            await AnsibleRunner(config).run_playbook("site.yml", inventory_path, spec)
+            ansible_result = await _run_ansible(resource, config, ctx)
+            if not ansible_result.success:
+                await ctx.set_condition(
+                    resource_id,
+                    "AnsibleConfigured",
+                    "False",
+                    "AnsibleFailed",
+                    ansible_result.error_message or "",
+                    observed_generation=generation,
+                )
+                raise RuntimeError(
+                    f"Ansible workflow failed: {ansible_result.error_message}"
+                )
+
+            await ctx.set_condition(
+                resource_id,
+                "AnsibleConfigured",
+                "True",
+                "AnsibleApplied",
+                "Ansible configuration succeeded",
+                observed_generation=generation,
+            )
 
             patroni_endpoints = outputs.get("patroni_endpoints", [])
             initialiser = ClusterInitialiser(config)
@@ -229,12 +323,25 @@ class PostgresClusterReconciler(ReconcilerPlugin):
             db_user: Optional[str] = spec.get("db_user")
             leader_endpoint: str = outputs.get("leader_endpoint", "")
             if db_name and db_user and leader_endpoint:
-                await initialiser.create_database(leader_endpoint, db_name, db_user)
+                await initialiser.create_database(
+                    leader_endpoint, db_name, db_user
+                )
 
             await initialiser.verify_replication(patroni_endpoints)
 
+            await ctx.set_condition(
+                resource_id,
+                "ClusterInitialized",
+                "True",
+                "InitComplete",
+                "Cluster initialized successfully",
+                observed_generation=generation,
+            )
+
         except Exception as exc:
-            logger.exception("Reconciliation failed for resource %d", resource_id)
+            logger.exception(
+                "Reconciliation failed for resource %d", resource_id
+            )
             await ctx.update_status(resource_id, "failed", message=str(exc))
             return ReconcileResult(success=False, message=str(exc))
 
@@ -261,13 +368,18 @@ class PostgresClusterReconciler(ReconcilerPlugin):
         resource_id: int = resource["id"]
 
         try:
-            destroy_result = await _run_terraform("destroy", resource, config, ctx)
+            destroy_result = await _run_terraform(
+                "destroy", resource, config, ctx
+            )
             if not destroy_result.success:
                 raise RuntimeError(
-                    f"Terraform destroy workflow failed: {destroy_result.error_message}"
+                    "Terraform destroy workflow failed: "
+                    f"{destroy_result.error_message}"
                 )
         except Exception as exc:
-            logger.exception("Terraform destroy failed for resource %d", resource_id)
+            logger.exception(
+                "Terraform destroy failed for resource %d", resource_id
+            )
             await ctx.update_status(resource_id, "failed", message=str(exc))
             return ReconcileResult(success=False, message=str(exc))
 

@@ -48,7 +48,9 @@ class InventoryBuilder:
             Path to the temporary ``aws_ec2.yml`` file.
         """
         cluster_name: str = _extract(terraform_outputs, "cluster_name", "") or ""
-        region: str = _extract(terraform_outputs, "aws_region", None) or config.aws_region
+        region: str = (
+            _extract(terraform_outputs, "aws_region", None) or config.aws_region
+        )
 
         compose: Dict[str, str] = {
             "ansible_host": "public_ip_address",

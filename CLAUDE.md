@@ -2,11 +2,20 @@
 
 ## Project Overview
 
-This is a standalone **reconciler plugin** for the [no8s-operator](https://github.com/wilsonge/no8s-operator) that provisions and manages highly-available PostgreSQL clusters on AWS EC2 using **Terraform via GitHub Actions** (infrastructure), **Ansible** (configuration), and **Patroni** (HA management).
+This is a standalone **reconciler plugin** for the [no8s-operator](https://github.com/wilsonge/no8s-operator) that
+provisions and manages highly-available PostgreSQL clusters on AWS EC2 using **Terraform via GitHub Actions** (infrastructure),
+**Ansible** (configuration), and **Patroni** (HA management).
 
-Terraform plan/apply/destroy are dispatched as GitHub Actions `workflow_dispatch` runs (`.github/workflows/terraform.yml`). The reconciler triggers the workflow via the operator's built-in `github_actions` action plugin, polls for completion, and — after an apply — downloads the `terraform-outputs` artifact to obtain EC2 IPs and other outputs. Ansible then discovers nodes via the `amazon.aws.aws_ec2` inventory plugin (filtering by the `ClusterName` EC2 tag set by Terraform) rather than building a static inventory from the artifact.
+Terraform plan/apply/destroy are dispatched as GitHub Actions `workflow_dispatch` runs (`.github/workflows/terraform.yml`).
+Ansible configuration is dispatched as a separate GitHub Actions `workflow_dispatch` run (`.github/workflows/ansible.yml`).
+Both are triggered via the operator's built-in `github_actions` action plugin, which polls for completion. After a Terraform
+apply, the reconciler downloads the `terraform-outputs` artifact to obtain EC2 IPs and other outputs. The Ansible workflow
+generates an EC2 dynamic inventory inline (using the `amazon.aws.aws_ec2` plugin, filtering by the `ClusterName` EC2 tag
+set by Terraform) and runs the playbook entirely within GitHub Actions — no Ansible subprocess on the reconciler host.
 
-The plugin implements the `ReconcilerPlugin` interface from no8s-operator (`src/plugins/reconcilers/base.py`) and is registered via Python entry points under the `no8s.reconcilers` group. It owns the full reconciliation loop for `PostgresCluster` resources.
+The plugin implements the `ReconcilerPlugin` interface from no8s-operator (`src/plugins/reconcilers/base.py`) and is 
+registered via Python entry points under the `no8s.reconcilers` group. It owns the full reconciliation loop for 
+`PostgresCluster` resources.
 
 ## Architecture
 
@@ -35,8 +44,8 @@ The plugin implements the `ReconcilerPlugin` interface from no8s-operator (`src/
 │    1. Handle deletion (GHA destroy workflow)            │
 │    2. Detect drift (GHA plan workflow + Patroni API)    │
 │    3. Apply changes if needed:                          │
-│       a. GHA apply workflow (EC2 + networking via TF)   │
-│       b. Ansible (EC2 inventory plugin → all roles)     │
+│       a. GHA terraform workflow (apply — EC2 + network) │
+│       b. GHA ansible workflow (inventory + all roles)   │
 │       c. Cluster init (quorum, DB, roles)               │
 │    4. Update resource status                            │
 └─────────────────────────────────────────────────────────┘
@@ -44,7 +53,8 @@ The plugin implements the `ReconcilerPlugin` interface from no8s-operator (`src/
 
 ## Reconciler Contract
 
-This plugin implements the `ReconcilerPlugin` abstract base class from no8s-operator. The operator discovers and starts it at boot:
+This plugin implements the `ReconcilerPlugin` abstract base class from no8s-operator. The operator discovers and starts
+it at boot:
 
 1. **`name`** (property) → `"postgres_cluster"`
 2. **`resource_types`** (property) → `["PostgresCluster"]`
@@ -58,85 +68,15 @@ Key data types from no8s-operator (`src/plugins/reconcilers/base.py`):
 
 Resource status lifecycle managed by the reconciler: `pending` → `reconciling` → `ready` / `failed` / `deleting`
 
-## Directory Structure
-
-```
-no8s-postgres/
-├── CLAUDE.md                          # This file
-├── README.md
-├── pyproject.toml                     # Package config, entry points, package-data
-├── .github/
-│   └── workflows/
-│       └── terraform.yml              # workflow_dispatch: plan | apply | destroy
-├── src/
-│   └── no8s_postgres/
-│       ├── __init__.py
-│       ├── reconciler.py              # PostgresClusterReconciler (ReconcilerPlugin impl)
-│       ├── config.py                  # PostgresConfig dataclass (env vars + plugin_config)
-│       ├── workspace.py               # ReconcileWorkspace (temp dir context manager; unused)
-│       ├── github/
-│       │   ├── __init__.py
-│       │   └── actions.py             # download_artifact_content() — fetches GHA zip artifact
-│       ├── terraform/
-│       │   ├── __init__.py
-│       │   ├── runner.py              # Superseded — Terraform now runs in GHA
-│       │   └── templates/
-│       │       ├── main.tf            # VPC, subnets, security groups, EC2 instances, EBS
-│       │       ├── variables.tf       # Input variables
-│       │       ├── outputs.tf         # Instance IPs, endpoints (used by reconciler + Ansible)
-│       │       └── backend.tf         # S3 backend + provider config
-│       ├── ansible/
-│       │   ├── __init__.py
-│       │   ├── inventory.py           # InventoryBuilder — writes aws_ec2.yml plugin config
-│       │   ├── runner.py              # AnsibleRunner — asyncio subprocess wrapper
-│       │   └── playbooks/
-│       │       ├── requirements.yml   # Ansible Galaxy: amazon.aws>=8, ansible.posix>=1.5
-│       │       ├── site.yml           # Main playbook (all roles; passwords via lookup)
-│       │       └── roles/
-│       │           ├── common/        # apt packages, sysctl PostgreSQL tuning, chrony
-│       │           │   ├── tasks/main.yml
-│       │           │   └── handlers/main.yml
-│       │           ├── etcd/          # etcd cluster for Patroni DCS (all nodes)
-│       │           │   ├── tasks/main.yml
-│       │           │   ├── handlers/main.yml
-│       │           │   └── templates/etcd.env.j2
-│       │           ├── postgresql/    # pgdg repo, PostgreSQL install, EBS mount
-│       │           │   ├── tasks/main.yml
-│       │           │   └── handlers/main.yml
-│       │           ├── patroni/       # Patroni service + patroni.yml config
-│       │           │   ├── tasks/main.yml
-│       │           │   ├── handlers/main.yml
-│       │           │   └── templates/patroni.yml.j2
-│       │           ├── pgbouncer/     # Connection pooling (when pgbouncer_enabled)
-│       │           │   ├── tasks/main.yml
-│       │           │   ├── handlers/main.yml
-│       │           │   └── templates/pgbouncer.ini.j2
-│       │           └── pgbackrest/    # S3-backed backups (when backup_enabled)
-│       │               ├── tasks/main.yml
-│       │               └── templates/pgbackrest.conf.j2
-│       └── cluster/
-│           ├── __init__.py
-│           ├── initialiser.py         # ClusterInitialiser — stubs (NotImplementedError)
-│           └── health.py              # HealthChecker — stub (returns healthy=True)
-├── tests/
-│   ├── conftest.py                    # operator stubs injected into sys.modules
-│   ├── test_reconciler.py             # Reconciler lifecycle tests (6 tests)
-│   ├── test_inventory.py              # InventoryBuilder tests (18 tests)
-│   ├── test_ansible_runner.py         # AnsibleRunner tests (12 tests)
-│   ├── test_terraform_runner.py       # (placeholder)
-│   └── test_cluster_initialiser.py    # (placeholder)
-└── .gitignore
-```
-
 ## EC2 Inventory Plugin
 
-`InventoryBuilder.build(terraform_outputs, config)` writes a temp `aws_ec2.yml` file and returns its `Path`.  `AnsibleRunner.run_playbook()` passes this as `-i <path>` and deletes the file after the playbook completes.
+The `ansible.yml` GHA workflow generates an `aws_ec2.yml` inventory file inline (Python script in a `run:` step) using the cluster name and spec passed as workflow inputs. The `SSH_PRIVATE_KEY` repository secret is written to `~/.ssh/no8s_postgres` on the runner.
 
 The generated config:
 
 ```yaml
 plugin: amazon.aws.aws_ec2
-regions: [eu-west-1]
+regions: [<region from spec>]
 filters:
   tag:ClusterName: <cluster-name>   # matches Terraform's ClusterName tag
   instance-state-name: running
@@ -144,8 +84,8 @@ hostnames: [public_ip_address]
 compose:
   ansible_host: public_ip_address
   ansible_user: '"ubuntu"'
-  ansible_ssh_private_key_file: '"/path/to/key"'   # omitted if SSH_PRIVATE_KEY_PATH unset
-  ansible_ssh_common_args: '"-o StrictHostKeyChecking=no -o ConnectTimeout=30"'
+  ansible_ssh_private_key_file: '"~/.ssh/no8s_postgres"'
+  ansible_ssh_common_args: '"-o StrictHostKeyChecking=no -o ConnectTimeout=<ansible_timeout>"'
   node_index: "tags['NodeIndex'] | int"
   cluster_name: "tags['ClusterName']"
 groups:
@@ -154,9 +94,9 @@ groups:
   postgres_nodes:   "'ClusterName' in tags"
 ```
 
-Requires the `amazon.aws` Ansible collection:
+Requires the `amazon.aws` Ansible collection (installed by the GHA workflow):
 ```bash
-ansible-galaxy collection install -r src/no8s_postgres/ansible/playbooks/requirements.yml
+ansible-galaxy collection install -r ansible/playbooks/requirements.yml
 ```
 
 ## Resource Type Schema
@@ -286,22 +226,20 @@ This reconciler handles `PostgresCluster` resources:
 
 ## Configuration (Environment Variables)
 
-| Variable | Description | Default |
-|---|---|---|
-| `AWS_REGION` | AWS region | `eu-west-1` |
-| `TF_STATE_BUCKET` | S3 bucket for Terraform state | required |
-| `TF_STATE_DYNAMODB_TABLE` | DynamoDB table for state locking | `terraform-locks` |
-| `TF_STATE_KEY_PREFIX` | Key prefix in the S3 bucket | `no8s-postgres/` |
-| `SSH_PRIVATE_KEY_PATH` | Path to SSH key for Ansible | required |
-| `ANSIBLE_TIMEOUT` | Ansible SSH timeout in seconds | `30` |
-| `CLUSTER_INIT_TIMEOUT` | Timeout waiting for cluster quorum (seconds) | `300` |
-| `RECONCILE_POLL_INTERVAL` | Seconds between reconciliation polls | `30` |
-| `GITHUB_TOKEN` | GitHub personal access token (artifact download) | required |
-| `GITHUB_REPO` | GitHub repository containing the Terraform workflow (`owner/repo`) | required |
-| `GITHUB_REF` | Branch/ref to run the workflow on | `main` |
-| `GITHUB_WORKFLOW` | Workflow filename in `.github/workflows/` | `terraform.yml` |
+| Variable                  | Description                                                   | Default           |
+|---------------------------|---------------------------------------------------------------|-------------------|
+| `AWS_REGION`              | AWS region                                                    | `eu-west-1`       |
+| `TF_STATE_BUCKET`         | S3 bucket for Terraform state                                 | required          |
+| `TF_STATE_DYNAMODB_TABLE` | DynamoDB table for state locking                              | `terraform-locks` |
+| `TF_STATE_KEY_PREFIX`     | Key prefix in the S3 bucket                                   | `no8s-postgres/`  |
+| `CLUSTER_INIT_TIMEOUT`    | Timeout waiting for cluster quorum (seconds)                  | `300`             |
+| `RECONCILE_POLL_INTERVAL` | Seconds between reconciliation polls                          | `30`              |
+| `GITHUB_TOKEN`            | GitHub personal access token (artifact download)              | required          |
+| `GITHUB_REPO`             | GitHub repository containing the GHA workflows (`owner/repo`) | required          |
+| `GITHUB_REF`              | Branch/ref to run the workflow on                             | `main`            |
+| `GITHUB_WORKFLOW`         | Terraform workflow filename in `.github/workflows/`           | `terraform.yml`   |
 
-The GitHub Actions workflow reads repository secrets for AWS OIDC (`AWS_ROLE_ARN`, `AWS_REGION`, `TF_STATE_BUCKET`, `TF_STATE_DYNAMODB_TABLE`) — set these in the repository's Actions secrets.
+The GitHub Actions workflows read repository secrets for AWS OIDC (`AWS_ROLE_ARN`, `AWS_REGION`, `TF_STATE_BUCKET`, `TF_STATE_DYNAMODB_TABLE`) and for Ansible SSH access (`SSH_PRIVATE_KEY`) — set these in the repository's Actions secrets.
 
 ## Entry Point Registration
 
@@ -333,13 +271,15 @@ If no drift, requeue after poll interval.
 
 ### Stage 3: Apply (if drift or first provision)
 1. **Terraform (via GitHub Actions)** — `_run_terraform("apply", ...)` via GHA plugin; download the `terraform-outputs` artifact (JSON) via `download_artifact_content()`
-2. **Ansible** — `InventoryBuilder().build(outputs, config)` writes an `aws_ec2.yml` EC2 inventory plugin config targeting instances by `ClusterName` tag; `AnsibleRunner(config).run_playbook("site.yml", inventory_path, spec)` runs `ansible-playbook` as an asyncio subprocess with the full spec as `--extra-vars`:
-   - `common` — OS packages, sysctl tuning, chrony
-   - `etcd` — Install and cluster etcd (Patroni DCS backend); idempotent via `ETCD_INITIAL_CLUSTER_STATE`
-   - `postgresql` — pgdg repo, install PostgreSQL, stop default service, format + mount EBS volume
-   - `patroni` — Install via pip, template `patroni.yml` (etcd hosts from inventory group), systemd unit
-   - `pgbouncer` — Install and configure PgBouncer (when `pgbouncer_enabled=true`)
-   - `pgbackrest` — Configure S3-backed backups (when `backup_enabled=true`)
+2. **Ansible (via GitHub Actions)** — `_run_ansible(...)` dispatches the `ansible.yml` workflow via the GHA plugin, passing `cluster_name`, `resource_id`, and `spec_json` as inputs. The workflow runner:
+   - Generates `aws_ec2.yml` (EC2 dynamic inventory targeting instances by `ClusterName` tag) inline in Python
+   - Runs `ansible-playbook ansible/playbooks/site.yml -i aws_ec2.yml --extra-vars <spec>`:
+     - `common` — OS packages, sysctl tuning, chrony
+     - `etcd` — Install and cluster etcd (Patroni DCS backend); idempotent via `ETCD_INITIAL_CLUSTER_STATE`
+     - `postgresql` — pgdg repo, install PostgreSQL, stop default service, format + mount EBS volume
+     - `patroni` — Install via pip, template `patroni.yml` (etcd hosts from inventory group), systemd unit
+     - `pgbouncer` — Install and configure PgBouncer (when `pgbouncer_enabled=true`)
+     - `pgbackrest` — Configure S3-backed backups (when `backup_enabled=true`)
 3. **Cluster init** — `ClusterInitialiser.wait_for_quorum()`, `create_database()`, `verify_replication()` (stubs — `NotImplementedError`)
 
 ### Stage 4: Status Update
@@ -364,14 +304,20 @@ Call `ctx.update_status(resource_id, "ready", ...)` and `ctx.record_reconciliati
 # Install in dev mode
 pip install -e ".[dev]"
 
-# Install Ansible collections (required for playbooks)
-ansible-galaxy collection install -r src/no8s_postgres/ansible/playbooks/requirements.yml
-
 # Format
 black src/ tests/
 
 # Lint
 flake8 src/ tests/
+```
+
+Ansible and Terraform run entirely within GitHub Actions. To test the Ansible playbook locally:
+
+```bash
+pip install ansible-core boto3
+ansible-galaxy collection install -r ansible/playbooks/requirements.yml
+# generate aws_ec2.yml manually, then:
+ansible-playbook ansible/playbooks/site.yml -i aws_ec2.yml --extra-vars '{"cluster_name":"test",...}'
 ```
 
 ## Running Tests
@@ -396,13 +342,11 @@ PYTHONPATH=src pytest tests/test_reconciler.py::test_reconcile_handles_deletion 
 
 ## Key Dependencies
 
-- `ansible-core` (Python package — runs `ansible-playbook` as a subprocess)
-- `PyYAML` (writes the `aws_ec2.yml` inventory plugin config)
 - `httpx` (Patroni REST API health checks + GitHub API calls)
-- `boto3` (AWS SDK — used by the `amazon.aws` Ansible collection at runtime)
 - `jinja2` (Terraform template rendering, used inside the GHA workflow)
-- Ansible collections: `amazon.aws` (EC2 inventory plugin), `ansible.posix` (sysctl, mount)
 - Terraform CLI — runs inside GitHub Actions only, not on the reconciler host
+- `ansible-core`, `boto3`, `PyYAML` — installed on the GHA runner by `ansible.yml`; not required on the reconciler host
+- Ansible collections: `amazon.aws` (EC2 inventory plugin), `ansible.posix` (sysctl, mount) — installed on GHA runner
 
 ## Reference Files (no8s-operator)
 

@@ -15,7 +15,7 @@ async def download_artifact_content(download_url: str, token: str) -> dict:
     extracts the first .json file found, and returns the parsed dict.
 
     Args:
-        download_url: The archive_download_url from the GitHub API artifacts list.
+        download_url: The archive_download_url from the GitHub API.
         token: GitHub personal access token.
 
     Returns:
