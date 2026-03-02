@@ -266,11 +266,15 @@ If the resource has `status=deleting` or a deletion timestamp:
 Only when `generation == observed_generation` and `status == "ready"`:
 1. **Infrastructure drift** — `_run_terraform("plan", ...)` via GHA plugin; non-success conclusion sets `needs_apply = True`
 2. **Cluster health drift** — `HealthChecker(config).check(patroni_endpoints)` (currently a no-op stub returning `healthy=True`)
+   - No drift → sets `ClusterHealthy=True` / `HealthCheckPassed`
+   - Drift detected → sets `ClusterHealthy=False` / `HealthDriftDetected`, triggers apply
 
 If no drift, requeue after poll interval.
 
 ### Stage 3: Apply (if drift or first provision)
 1. **Terraform (via GitHub Actions)** — `_run_terraform("apply", ...)` via GHA plugin; download the `terraform-outputs` artifact (JSON) via `download_artifact_content()`
+   - Success → sets `InfrastructureProvisioned=True` / `TerraformApplied`
+   - Failure → sets `InfrastructureProvisioned=False` / `TerraformFailed`, raises
 2. **Ansible (via GitHub Actions)** — `_run_ansible(...)` dispatches the `ansible.yml` workflow via the GHA plugin, passing `cluster_name`, `resource_id`, and `spec_json` as inputs. The workflow runner:
    - Generates `aws_ec2.yml` (EC2 dynamic inventory targeting instances by `ClusterName` tag) inline in Python
    - Runs `ansible-playbook ansible/playbooks/site.yml -i aws_ec2.yml --extra-vars <spec>`:
@@ -280,7 +284,10 @@ If no drift, requeue after poll interval.
      - `patroni` — Install via pip, template `patroni.yml` (etcd hosts from inventory group), systemd unit
      - `pgbouncer` — Install and configure PgBouncer (when `pgbouncer_enabled=true`)
      - `pgbackrest` — Configure S3-backed backups (when `backup_enabled=true`)
+   - Success → sets `AnsibleConfigured=True` / `AnsibleApplied`
+   - Failure → sets `AnsibleConfigured=False` / `AnsibleFailed`, raises
 3. **Cluster init** — `ClusterInitialiser.wait_for_quorum()`, `create_database()`, `verify_replication()` (stubs — `NotImplementedError`)
+   - Success → sets `ClusterInitialized=True` / `InitComplete`
 
 ### Stage 4: Status Update
 Call `ctx.update_status(resource_id, "ready", ...)` and `ctx.record_reconciliation(...)` with outputs:
@@ -297,6 +304,86 @@ Call `ctx.update_status(resource_id, "ready", ...)` and `ctx.record_reconciliati
   "cluster_name": "prod-postgres"
 }
 ```
+
+## Status Conditions
+
+The reconciler sets Kubernetes-style conditions on each `PostgresCluster` resource via `ctx.set_condition()`. Three standard conditions (`Ready`, `Reconciling`, `Degraded`) are managed automatically by the operator controller. The reconciler adds four domain-specific conditions for fine-grained observability.
+
+### Condition reference
+
+| Condition | Set in stage | `True` reason | `False` reason |
+|---|---|---|---|
+| `InfrastructureProvisioned` | Stage 3 — Terraform apply | `TerraformApplied` | `TerraformFailed` |
+| `AnsibleConfigured` | Stage 3 — Ansible workflow | `AnsibleApplied` | `AnsibleFailed` |
+| `ClusterInitialized` | Stage 3 — cluster init | `InitComplete` | *(exception propagates; not set False)* |
+| `ClusterHealthy` | Stage 2 — drift detection | `HealthCheckPassed` | `HealthDriftDetected` |
+
+`ClusterHealthy` is only set when the resource is `ready` and `generation == observed_generation` (i.e., during a steady-state drift check, not during initial provisioning).
+
+### Condition values
+
+Each condition follows the Kubernetes convention:
+
+| Field | Values |
+|---|---|
+| `status` | `"True"`, `"False"`, `"Unknown"` |
+| `reason` | Short CamelCase string (see table above) |
+| `message` | Human-readable detail; contains the raw error on failure |
+| `lastTransitionTime` | ISO-8601 timestamp; only updates when `status` changes |
+| `observedGeneration` | Resource generation when the condition was last set |
+
+### Investigating failure conditions
+
+**`InfrastructureProvisioned=False` (`TerraformFailed`)**
+
+The Terraform apply GitHub Actions workflow failed. The `message` field contains the workflow error.
+
+1. Open the GitHub Actions run for `terraform.yml` in the repository — the run ID is logged by the operator's `github_actions` plugin.
+2. Check the `terraform apply` step output for the specific AWS API error (e.g. quota exceeded, VPC limit, IAM permission denied).
+3. Common causes: IAM role missing `ec2:RunInstances` or `ec2:CreateVpc`; S3/DynamoDB state backend unreachable; Terraform state locked by a previous failed run.
+   - Unlock state: `terraform force-unlock <lock-id>` (lock ID is in the workflow logs).
+4. After fixing the root cause, bump the resource `generation` (edit any spec field) to trigger a fresh reconcile.
+
+**`AnsibleConfigured=False` (`AnsibleFailed`)**
+
+The Ansible `ansible.yml` GitHub Actions workflow completed but the playbook returned a non-zero exit code. The `message` field contains the error.
+
+1. Open the GitHub Actions run for `ansible.yml`. Find the failing task in the `ansible-playbook` step output — look for `FAILED` or `fatal:` lines.
+2. The playbook runs these roles in order: `common` → `etcd` → `postgresql` → `patroni` → `pgbouncer` (if enabled) → `pgbackrest` (if enabled). The failing role narrows the scope.
+3. Common causes by role:
+   - **`common`** — OS package installation failed (apt lock, missing mirror). Re-run is safe; role is idempotent.
+   - **`etcd`** — etcd cluster failed to form quorum; check `ETCD_INITIAL_CLUSTER` env vars in the `etcd.env.j2` template output and EC2 security group rules (etcd ports 2379/2380).
+   - **`postgresql`** — pgdg repo GPG error or EBS volume not attached yet (Terraform outputs race). Retry usually resolves.
+   - **`patroni`** — `patroni.yml` config rendered incorrectly; check the template `ansible/playbooks/roles/patroni/templates/patroni.yml.j2` against the spec JSON passed as `extra_vars`.
+   - **`pgbouncer`** / **`pgbackrest`** — misconfigured spec (`pgbouncer_pool_size`, `backup_retention_days`); fix spec and re-reconcile.
+4. SSH into the affected node (IP from Terraform outputs or EC2 console, key from `SSH_PRIVATE_KEY` secret) and check `journalctl -u patroni` / `journalctl -u etcd`.
+
+**`ClusterHealthy=False` (`HealthDriftDetected`)**
+
+The Patroni health check detected drift during a steady-state poll. The `message` field contains `drift_details`.
+
+> **Note:** `HealthChecker` is currently a stub that always returns `healthy=True`. This condition will only fire once a real implementation is in place.
+
+When implemented, the expected investigation steps are:
+1. Check `patroni_endpoints` in the resource outputs and query each node directly:
+   ```bash
+   curl http://<node-ip>:8008/health      # leader: 200, replica: 503
+   curl http://<node-ip>:8008/cluster     # full cluster state
+   ```
+2. A replica showing `running` but lagging: check `pg_stat_replication` on the leader.
+3. A node showing `start failed` or `stopped`: SSH in and check `journalctl -u patroni -n 100`.
+4. Split-brain (two nodes claiming leader): check etcd cluster health — `etcdctl endpoint health --cluster`. If etcd has lost quorum, restore it before touching Patroni.
+
+**`ClusterInitialized` not `True` (cluster init exception)**
+
+The cluster init stage (`wait_for_quorum` / `create_database` / `verify_replication`) raised an exception. The resource `status` will be `failed` and the exception message appears in the operator logs and in `ctx.update_status`.
+
+> **Note:** `ClusterInitialiser` methods are currently stubs raising `NotImplementedError`. This will only occur in production once they are implemented.
+
+1. Check operator logs for `Reconciliation failed for resource <id>` and the full traceback.
+2. If quorum timed out: Ansible completed but Patroni did not elect a leader within `CLUSTER_INIT_TIMEOUT` seconds. Check `journalctl -u patroni` and `journalctl -u etcd` on each node.
+3. If `create_database` failed: connect to the leader endpoint and check `pg_hba.conf` and the `patroni.yml` superuser credentials.
+4. The resource will be requeued automatically; fix the underlying issue and the next reconcile will retry.
 
 ## Development
 
