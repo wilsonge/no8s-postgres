@@ -21,6 +21,8 @@ class PostgresConfig:
     github_repo: str = ""
     github_ref: str = "main"
     github_workflow: str = "terraform.yml"
+    postgres_superuser: str = "postgres"
+    postgres_superuser_password: str = ""
 
     @classmethod
     def from_env_and_plugin_config(
@@ -74,5 +76,13 @@ class PostgresConfig:
             github_workflow=cfg.get(
                 "github_workflow",
                 os.environ.get("GITHUB_WORKFLOW", "terraform.yml"),
+            ),
+            postgres_superuser=cfg.get(
+                "postgres_superuser",
+                os.environ.get("POSTGRES_SUPERUSER", "postgres"),
+            ),
+            postgres_superuser_password=cfg.get(
+                "postgres_superuser_password",
+                os.environ.get("POSTGRES_SUPERUSER_PASSWORD", ""),
             ),
         )
