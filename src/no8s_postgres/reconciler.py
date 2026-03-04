@@ -37,21 +37,15 @@ def _trigger_reason(resource: Dict[str, Any]) -> str:
     return "drift_check"
 
 
-def _workflow_inputs(action: str, resource: Dict[str, Any]) -> dict:
-    return {
-        "action": action,
+def _workflow_inputs(resource: Dict[str, Any], action: Optional[str] = None) -> dict:
+    inputs = {
         "cluster_name": resource["name"],
         "resource_id": str(resource["id"]),
         "spec_json": json.dumps(resource.get("spec", {})),
     }
-
-
-def _ansible_workflow_inputs(resource: Dict[str, Any]) -> dict:
-    return {
-        "cluster_name": resource["name"],
-        "resource_id": str(resource["id"]),
-        "spec_json": json.dumps(resource.get("spec", {})),
-    }
+    if action is not None:
+        inputs["action"] = action
+    return inputs
 
 
 def _make_action_ctx(
@@ -89,7 +83,7 @@ async def _run_terraform(
         resource,
         config,
         config.github_workflow,
-        _workflow_inputs(action, resource),
+        _workflow_inputs(resource, action),
     )
     workspace = await plugin.prepare(action_ctx)
     result = await plugin.apply(action_ctx, workspace)
@@ -108,7 +102,7 @@ async def _run_ansible(
         resource,
         config,
         _ANSIBLE_WORKFLOW_FILE,
-        _ansible_workflow_inputs(resource),
+        _workflow_inputs(resource),
     )
     workspace = await plugin.prepare(action_ctx)
     result = await plugin.apply(action_ctx, workspace)

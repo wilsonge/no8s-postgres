@@ -44,10 +44,6 @@ class PostgresConfig:
                 "tf_state_dynamodb_table",
                 os.environ.get("TF_STATE_DYNAMODB_TABLE", "terraform-locks"),
             ),
-            ssh_private_key_path=cfg.get(
-                "ssh_private_key_path",
-                os.environ.get("SSH_PRIVATE_KEY_PATH", ""),
-            ),
             ansible_timeout=int(
                 cfg.get(
                     "ansible_timeout",

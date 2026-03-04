@@ -39,7 +39,7 @@ jobs:
         run: pip install ansible-core boto3
 
       - name: Install Ansible collections
-        run: ansible-galaxy collection install -r ansible/playbooks/requirements.yml
+        run: ansible-galaxy collection install -r ansible/requirements.yml
 
       - name: Write SSH private key
         run: |
@@ -103,6 +103,6 @@ jobs:
           spec['cluster_name'] = os.environ['CLUSTER_NAME']
           print(json.dumps(spec))
           ")
-          ansible-playbook ansible/playbooks/site.yml \
+          ansible-playbook ansible/site.yml \
             -i aws_ec2.yml \
             --extra-vars "${EXTRA_VARS}"
