@@ -4,6 +4,41 @@
     name: etcd
     state: present
 
+- name: Check if etcd EBS volume has a filesystem
+  ansible.builtin.command: blkid /dev/xvdg
+  register: etcd_blkid_result
+  changed_when: false
+  failed_when: false
+
+- name: Format etcd EBS volume with ext4
+  ansible.builtin.command: mkfs.ext4 /dev/xvdg
+  when: etcd_blkid_result.rc != 0
+  changed_when: true
+
+- name: Create etcd data mount point
+  ansible.builtin.file:
+    path: /var/lib/etcd
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: "0700"
+
+- name: Mount etcd EBS volume
+  ansible.posix.mount:
+    path: /var/lib/etcd
+    src: /dev/xvdg
+    fstype: ext4
+    opts: defaults,noatime
+    state: mounted
+
+- name: Ensure etcd data mount is owned by etcd
+  ansible.builtin.file:
+    path: /var/lib/etcd
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: "0700"
+
 - name: Check if etcd data directory already exists (idempotency guard)
   ansible.builtin.stat:
     path: /var/lib/etcd/member

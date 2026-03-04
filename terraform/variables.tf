@@ -33,6 +33,12 @@ variable "volume_size_gb" {
   default     = 100
 }
 
+variable "etcd_volume_size_gb" {
+  description = "EBS etcd volume size per node in GB"
+  type        = number
+  default     = 10
+}
+
 variable "volume_type" {
   description = "EBS volume type (gp3, io1, io2)"
   type        = string

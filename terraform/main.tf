@@ -2,19 +2,20 @@
 # Data sources
 # ---------------------------------------------------------------------------
 
-data "aws_ami" "ubuntu" {
+data "aws_ami" "ubuntu-2404" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical
 
   filter {
     name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
   }
 
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
   }
+
+  owners = ["099720109477"] # Canonical
 }
 
 # ---------------------------------------------------------------------------
@@ -205,6 +206,34 @@ resource "aws_volume_attachment" "data" {
 
   device_name                    = "/dev/xvdf"
   volume_id                      = aws_ebs_volume.data[count.index].id
+  instance_id                    = aws_instance.node[count.index].id
+  stop_instance_before_detaching = true
+}
+
+# ---------------------------------------------------------------------------
+# EBS etcd volumes (one per node, separate from data to avoid IOPS contention)
+# ---------------------------------------------------------------------------
+
+resource "aws_ebs_volume" "etcd" {
+  count = var.cluster_size
+
+  availability_zone = aws_instance.node[count.index].availability_zone
+  size              = var.etcd_volume_size_gb
+  type              = "gp3"
+  encrypted         = true
+
+  tags = merge(var.tags, {
+    Name        = "${var.cluster_name}-etcd-${count.index}"
+    ClusterName = var.cluster_name
+    NodeIndex   = tostring(count.index)
+  })
+}
+
+resource "aws_volume_attachment" "etcd" {
+  count = var.cluster_size
+
+  device_name                    = "/dev/xvdg"
+  volume_id                      = aws_ebs_volume.etcd[count.index].id
   instance_id                    = aws_instance.node[count.index].id
   stop_instance_before_detaching = true
 }

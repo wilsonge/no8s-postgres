@@ -4,7 +4,7 @@
 
 This is a standalone **reconciler plugin** for the [no8s-operator](https://github.com/wilsonge/no8s-operator) that
 provisions and manages highly-available PostgreSQL clusters on AWS EC2 using **Terraform via GitHub Actions** (infrastructure),
-**Ansible** (configuration), and **Patroni** (HA management).
+**Ansible via GitHub Actions** (configuration), and **Patroni** (HA management).
 
 Terraform plan/apply/destroy are dispatched as GitHub Actions `workflow_dispatch` runs (`.github/workflows/terraform.yml`).
 Ansible configuration is dispatched as a separate GitHub Actions `workflow_dispatch` run (`.github/workflows/ansible.yml`).
@@ -21,17 +21,17 @@ registered via Python entry points under the `no8s.reconcilers` group. It owns t
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   no8s-operator                          │
-│              (controller startup)                        │
+│                   no8s-operator                         │
+│              (controller startup)                       │
 │                                                         │
-│  discovers reconcilers via entry points                  │
+│  discovers reconcilers via entry points                 │
 │  calls reconciler.start(ctx) in dedicated asyncio task  │
 └──────────────────────────┬──────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────┐
-│          PostgresClusterReconciler                       │
-│              (ReconcilerPlugin impl)                     │
+│          PostgresClusterReconciler                      │
+│              (ReconcilerPlugin impl)                    │
 │                                                         │
 │  start() loop:                                          │
 │    while not shutdown_event:                            │
@@ -311,12 +311,12 @@ The reconciler sets Kubernetes-style conditions on each `PostgresCluster` resour
 
 ### Condition reference
 
-| Condition | Set in stage | `True` reason | `False` reason |
-|---|---|---|---|
-| `InfrastructureProvisioned` | Stage 3 — Terraform apply | `TerraformApplied` | `TerraformFailed` |
-| `AnsibleConfigured` | Stage 3 — Ansible workflow | `AnsibleApplied` | `AnsibleFailed` |
-| `ClusterInitialized` | Stage 3 — cluster init | `InitComplete` | *(exception propagates; not set False)* |
-| `ClusterHealthy` | Stage 2 — drift detection | `HealthCheckPassed` | `HealthDriftDetected` |
+| Condition                   | Set in stage               | `True` reason       | `False` reason                          |
+|-----------------------------|----------------------------|---------------------|-----------------------------------------|
+| `InfrastructureProvisioned` | Stage 3 — Terraform apply  | `TerraformApplied`  | `TerraformFailed`                       |
+| `AnsibleConfigured`         | Stage 3 — Ansible workflow | `AnsibleApplied`    | `AnsibleFailed`                         |
+| `ClusterInitialized`        | Stage 3 — cluster init     | `InitComplete`      | *(exception propagates; not set False)* |
+| `ClusterHealthy`            | Stage 2 — drift detection  | `HealthCheckPassed` | `HealthDriftDetected`                   |
 
 `ClusterHealthy` is only set when the resource is `ready` and `generation == observed_generation` (i.e., during a steady-state drift check, not during initial provisioning).
 
@@ -324,13 +324,13 @@ The reconciler sets Kubernetes-style conditions on each `PostgresCluster` resour
 
 Each condition follows the Kubernetes convention:
 
-| Field | Values |
-|---|---|
-| `status` | `"True"`, `"False"`, `"Unknown"` |
-| `reason` | Short CamelCase string (see table above) |
-| `message` | Human-readable detail; contains the raw error on failure |
-| `lastTransitionTime` | ISO-8601 timestamp; only updates when `status` changes |
-| `observedGeneration` | Resource generation when the condition was last set |
+| Field                | Values                                                   |
+|----------------------|----------------------------------------------------------|
+| `status`             | `"True"`, `"False"`, `"Unknown"`                         |
+| `reason`             | Short CamelCase string (see table above)                 |
+| `message`            | Human-readable detail; contains the raw error on failure |
+| `lastTransitionTime` | ISO-8601 timestamp; only updates when `status` changes   |
+| `observedGeneration` | Resource generation when the condition was last set      |
 
 ### Investigating failure conditions
 
@@ -427,14 +427,6 @@ PYTHONPATH=src pytest tests/test_reconciler.py -v
 PYTHONPATH=src pytest tests/test_reconciler.py::test_reconcile_handles_deletion -v
 ```
 
-## Key Dependencies
-
-- `httpx` (Patroni REST API health checks + GitHub API calls)
-- `jinja2` (Terraform template rendering, used inside the GHA workflow)
-- Terraform CLI — runs inside GitHub Actions only, not on the reconciler host
-- `ansible-core`, `boto3`, `PyYAML` — installed on the GHA runner by `ansible.yml`; not required on the reconciler host
-- Ansible collections: `amazon.aws` (EC2 inventory plugin), `ansible.posix` (sysctl, mount) — installed on GHA runner
-
 ## Reference Files (no8s-operator)
 
 When implementing, refer to these files in the `no8s-operator` project:
@@ -444,3 +436,14 @@ When implementing, refer to these files in the `no8s-operator` project:
 - `src/controller.py` — How the controller starts reconcilers and manages shutdown
 - `tests/test_reconciler.py` — Minimal concrete ReconcilerPlugin example
 - `docs/writing-a-reconciler.md` — Full guide with DNS example (deletion, finalizers, requeue)
+
+## Short term items outstanding
+
+- [ ] Place a custom fact on the boxes to determine which is leader dynamically, node 0 should only be used if the cluster hasn't been initialised
+- [ ] Cleanup how the ansible inventory is generated - it is duplicated in inventory.py and the ansible github workflow
+- [ ] Identify any other redundant code from previous refactorings.
+
+## Long term items outstanding
+
+- [ ] Add end-to-end tests
+- [ ] Handle updates of items in order
