@@ -68,3 +68,23 @@
     state: started
     enabled: true
     daemon_reload: true
+
+- name: Ensure Ansible custom facts directory exists
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy Patroni custom fact script
+  ansible.builtin.copy:
+    src: patroni_facts.py
+    dest: /etc/ansible/facts.d/patroni.fact
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Refresh local facts
+  ansible.builtin.setup:
+    filter: ansible_local

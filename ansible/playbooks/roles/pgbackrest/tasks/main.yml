@@ -35,7 +35,17 @@
       --log-level-console=info stanza-create
   become: true
   become_user: postgres
-  when: node_index | default(999) | int == 0
+  # Run on the current Patroni leader when the cluster is already initialised,
+  # or on the lexicographically first node in postgres_nodes on first bring-up
+  # before the leader fact is available.
+  when: >-
+    (ansible_local.patroni is defined
+     and (ansible_local.patroni.cluster_initialized | bool)
+     and (ansible_local.patroni.is_leader | bool))
+    or
+    (not (ansible_local.patroni is defined
+          and (ansible_local.patroni.cluster_initialized | bool))
+     and inventory_hostname == (groups['postgres_nodes'] | sort | first))
   register: stanza_result
   failed_when:
     - stanza_result.rc != 0

@@ -1,22 +1,5 @@
 # no8s-postgres
 
-## Project Overview
-
-This is a standalone **reconciler plugin** for the [no8s-operator](https://github.com/wilsonge/no8s-operator) that
-provisions and manages highly-available PostgreSQL clusters on AWS EC2 using **Terraform via GitHub Actions** (infrastructure),
-**Ansible via GitHub Actions** (configuration), and **Patroni** (HA management).
-
-Terraform plan/apply/destroy are dispatched as GitHub Actions `workflow_dispatch` runs (`.github/workflows/terraform.yml`).
-Ansible configuration is dispatched as a separate GitHub Actions `workflow_dispatch` run (`.github/workflows/ansible.yml`).
-Both are triggered via the operator's built-in `github_actions` action plugin, which polls for completion. After a Terraform
-apply, the reconciler downloads the `terraform-outputs` artifact to obtain EC2 IPs and other outputs. The Ansible workflow
-generates an EC2 dynamic inventory inline (using the `amazon.aws.aws_ec2` plugin, filtering by the `ClusterName` EC2 tag
-set by Terraform) and runs the playbook entirely within GitHub Actions — no Ansible subprocess on the reconciler host.
-
-The plugin implements the `ReconcilerPlugin` interface from no8s-operator (`src/plugins/reconcilers/base.py`) and is 
-registered via Python entry points under the `no8s.reconcilers` group. It owns the full reconciliation loop for 
-`PostgresCluster` resources.
-
 ## Architecture
 
 ```
@@ -50,6 +33,17 @@ registered via Python entry points under the `no8s.reconcilers` group. It owns t
 │    4. Update resource status                            │
 └─────────────────────────────────────────────────────────┘
 ```
+
+Terraform plan/apply/destroy are dispatched as GitHub Actions `workflow_dispatch` runs (`.github/workflows/terraform.yml`).
+Ansible configuration is dispatched as a separate GitHub Actions `workflow_dispatch` run (`.github/workflows/ansible.yml`).
+Both are triggered via the operator's built-in `github_actions` action plugin, which polls for completion. After a Terraform
+apply, the reconciler downloads the `terraform-outputs` artifact to obtain EC2 IPs and other outputs. The Ansible workflow
+generates an EC2 dynamic inventory inline (using the `amazon.aws.aws_ec2` plugin, filtering by the `ClusterName` EC2 tag
+set by Terraform) and runs the playbook entirely within GitHub Actions — no Ansible subprocess on the reconciler host.
+
+The plugin implements the `ReconcilerPlugin` interface from no8s-operator (`src/plugins/reconcilers/base.py`) and is
+registered via Python entry points under the `no8s.reconcilers` group. It owns the full reconciliation loop for
+`PostgresCluster` resources.
 
 ## Reconciler Contract
 
@@ -86,13 +80,16 @@ compose:
   ansible_user: '"ubuntu"'
   ansible_ssh_private_key_file: '"~/.ssh/no8s_postgres"'
   ansible_ssh_common_args: '"-o StrictHostKeyChecking=no -o ConnectTimeout=<ansible_timeout>"'
-  node_index: "tags['NodeIndex'] | int"
   cluster_name: "tags['ClusterName']"
 groups:
-  patroni_primary:  "tags.get('NodeIndex', '999') == '0'"
-  patroni_replicas: "tags.get('NodeIndex', '999') != '0'"
-  postgres_nodes:   "'ClusterName' in tags"
+  postgres_nodes: "'ClusterName' in tags"
 ```
+
+The `patroni_leader` group is built dynamically at play time from the
+`ansible_local.patroni.is_leader` custom fact (deployed by the patroni role).
+Tasks that must run on the leader fall back to
+`groups['postgres_nodes'] | sort | first` when the cluster is not yet
+initialised (fact absent or `cluster_initialized=false`).
 
 Requires the `amazon.aws` Ansible collection (installed by the GHA workflow):
 ```bash
@@ -407,7 +404,7 @@ ansible-galaxy collection install -r ansible/playbooks/requirements.yml
 ansible-playbook ansible/playbooks/site.yml -i aws_ec2.yml --extra-vars '{"cluster_name":"test",...}'
 ```
 
-## Running Tests
+### Running Tests
 
 The test suite requires no live operator installation, AWS credentials, Terraform, or Ansible.
 Run after every change:
@@ -427,6 +424,10 @@ PYTHONPATH=src pytest tests/test_reconciler.py -v
 PYTHONPATH=src pytest tests/test_reconciler.py::test_reconcile_handles_deletion -v
 ```
 
+### Documentation
+When making changes check if the documentation in the architecture document (here), the README.md or the
+docs/ folder require updates.
+
 ## Reference Files (no8s-operator)
 
 When implementing, refer to these files in the `no8s-operator` project:
@@ -437,13 +438,8 @@ When implementing, refer to these files in the `no8s-operator` project:
 - `tests/test_reconciler.py` — Minimal concrete ReconcilerPlugin example
 - `docs/writing-a-reconciler.md` — Full guide with DNS example (deletion, finalizers, requeue)
 
-## Short term items outstanding
+## Roadmap
 
-- [ ] Place a custom fact on the boxes to determine which is leader dynamically, node 0 should only be used if the cluster hasn't been initialised
-- [ ] Cleanup how the ansible inventory is generated - it is duplicated in inventory.py and the ansible github workflow
-- [ ] Identify any other redundant code from previous refactorings.
-
-## Long term items outstanding
-
+- [ ] Add tags to all installs in the ansible code (so that users can choose to skip if using a custom AMI)
 - [ ] Add end-to-end tests
 - [ ] Handle updates of items in order

@@ -2,9 +2,14 @@
 # Main playbook — configures a Patroni HA PostgreSQL cluster.
 #
 # Host groups provided by the amazon.aws.aws_ec2 inventory plugin:
-#   postgres_nodes   — all cluster EC2 instances
-#   patroni_primary  — the initial primary (NodeIndex=0)
-#   patroni_replicas — replica nodes (NodeIndex>0)
+#   postgres_nodes  — all cluster EC2 instances
+#
+# Dynamic group built in pre_tasks (populated from the custom fact):
+#   patroni_leader  — the node currently holding the Patroni write lock
+#                     (ansible_local.patroni.is_leader == true).
+#                     Empty on the first playbook run (fact not yet deployed);
+#                     tasks that need to run on the leader fall back to
+#                     groups['postgres_nodes'] | sort | first.
 #
 # Extra-vars injected by the reconciler (from the PostgresCluster spec):
 #   postgres_version, cluster_name, cluster_size, db_name, db_user,
@@ -15,6 +20,18 @@
   hosts: postgres_nodes
   become: true
   gather_facts: true
+
+  pre_tasks:
+    # Build a dynamic group from the custom Patroni fact.  On a first run the
+    # fact file has not been deployed yet so ansible_local.patroni will be
+    # absent and the group will be empty — tasks that require the leader fall
+    # back to groups['postgres_nodes'] | sort | first.
+    - name: Build patroni_leader group from local fact
+      ansible.builtin.group_by:
+        key: patroni_leader
+      when:
+        - ansible_local.patroni is defined
+        - ansible_local.patroni.is_leader | default(false) | bool
 
   vars:
     # Provide sensible defaults so the playbook can run in isolation.

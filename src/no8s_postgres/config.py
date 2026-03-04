@@ -14,7 +14,6 @@ class PostgresConfig:
     tf_state_bucket: str = ""
     tf_state_key_prefix: str = "no8s-postgres/"
     tf_state_dynamodb_table: str = "terraform-locks"
-    ssh_private_key_path: str = ""
     ansible_timeout: int = 30
     cluster_init_timeout: int = 300
     reconcile_poll_interval: int = 30
