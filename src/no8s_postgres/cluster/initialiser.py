@@ -38,9 +38,7 @@ class ClusterInitialiser:
                         resp = await client.get(f"http://{ep}/cluster")
                         resp.raise_for_status()
                         members = resp.json().get("members", [])
-                        leaders = [
-                            m for m in members if m.get("role") == "leader"
-                        ]
+                        leaders = [m for m in members if m.get("role") == "leader"]
                         if leaders:
                             logger.info(
                                 "Cluster quorum established, leader: %s",
@@ -48,9 +46,7 @@ class ClusterInitialiser:
                             )
                             return
                     except Exception as exc:
-                        logger.debug(
-                            "Patroni endpoint %s unreachable: %s", ep, exc
-                        )
+                        logger.debug("Patroni endpoint %s unreachable: %s", ep, exc)
 
                 await asyncio.sleep(min(_POLL_INTERVAL, remaining))
 
@@ -70,9 +66,7 @@ class ClusterInitialiser:
         )
         try:
             # Use PostgreSQL's quote_ident to safely escape identifiers.
-            quoted_user = await conn.fetchval(
-                "SELECT quote_ident($1)", db_user
-            )
+            quoted_user = await conn.fetchval("SELECT quote_ident($1)", db_user)
             quoted_db = await conn.fetchval("SELECT quote_ident($1)", db_name)
 
             user_exists = await conn.fetchval(
@@ -86,12 +80,8 @@ class ClusterInitialiser:
                 "SELECT 1 FROM pg_database WHERE datname = $1", db_name
             )
             if not db_exists:
-                await conn.execute(
-                    f"CREATE DATABASE {quoted_db} OWNER {quoted_user}"
-                )
-                logger.info(
-                    "Created database %r with owner %r", db_name, db_user
-                )
+                await conn.execute(f"CREATE DATABASE {quoted_db} OWNER {quoted_user}")
+                logger.info("Created database %r with owner %r", db_name, db_user)
         finally:
             await conn.close()
 
@@ -103,9 +93,7 @@ class ClusterInitialiser:
                     resp = await client.get(f"http://{ep}/cluster")
                     resp.raise_for_status()
                     members = resp.json().get("members", [])
-                    replicas = [
-                        m for m in members if m.get("role") != "leader"
-                    ]
+                    replicas = [m for m in members if m.get("role") != "leader"]
                     not_streaming = [
                         m
                         for m in replicas
@@ -125,9 +113,7 @@ class ClusterInitialiser:
                 except RuntimeError:
                     raise
                 except Exception as exc:
-                    logger.debug(
-                        "Patroni endpoint %s unreachable: %s", ep, exc
-                    )
+                    logger.debug("Patroni endpoint %s unreachable: %s", ep, exc)
 
         raise RuntimeError(
             "Could not verify replication: no Patroni endpoint reachable: "

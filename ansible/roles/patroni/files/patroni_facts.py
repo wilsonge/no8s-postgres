@@ -19,7 +19,6 @@ patroni_scope         str   Patroni cluster scope name, or ""
 """
 
 import json
-import sys
 import urllib.error
 import urllib.request
 

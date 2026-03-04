@@ -1,6 +1,5 @@
 """Tests for ClusterInitialiser."""
 
-import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -43,9 +42,7 @@ async def test_wait_for_quorum_succeeds_on_leader():
         _member("node1", role="replica", state="streaming"),
     ]
     initialiser = ClusterInitialiser(_config())
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = AsyncMock(
             return_value=_make_http_response(_cluster_response(members))
@@ -75,9 +72,7 @@ async def test_wait_for_quorum_retries_until_leader_appears():
         return _make_http_response(data)
 
     initialiser = ClusterInitialiser(_config(cluster_init_timeout=30))
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = fake_get
         MockClient.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -93,9 +88,7 @@ async def test_wait_for_quorum_retries_until_leader_appears():
 @pytest.mark.asyncio
 async def test_wait_for_quorum_times_out():
     initialiser = ClusterInitialiser(_config(cluster_init_timeout=0))
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = AsyncMock(side_effect=Exception("refused"))
         MockClient.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -119,9 +112,7 @@ async def test_wait_for_quorum_falls_through_to_second_endpoint():
         return good
 
     initialiser = ClusterInitialiser(_config(cluster_init_timeout=30))
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = fake_get
         MockClient.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -160,7 +151,10 @@ def _make_conn(user_exists=False, db_exists=False):
 async def test_create_database_creates_role_and_db():
     conn = _make_conn(user_exists=False, db_exists=False)
 
-    with patch("no8s_postgres.cluster.initialiser.asyncpg.connect", AsyncMock(return_value=conn)):
+    with patch(
+        "no8s_postgres.cluster.initialiser.asyncpg.connect",
+        AsyncMock(return_value=conn),
+    ):
         await ClusterInitialiser(_config()).create_database(
             "10.0.1.10:5432", "myapp", "myapp_user"
         )
@@ -175,7 +169,10 @@ async def test_create_database_creates_role_and_db():
 async def test_create_database_skips_existing_role_and_db():
     conn = _make_conn(user_exists=True, db_exists=True)
 
-    with patch("no8s_postgres.cluster.initialiser.asyncpg.connect", AsyncMock(return_value=conn)):
+    with patch(
+        "no8s_postgres.cluster.initialiser.asyncpg.connect",
+        AsyncMock(return_value=conn),
+    ):
         await ClusterInitialiser(_config()).create_database(
             "10.0.1.10:5432", "myapp", "myapp_user"
         )
@@ -188,7 +185,10 @@ async def test_create_database_skips_existing_role_and_db():
 async def test_create_database_skips_existing_role_creates_db():
     conn = _make_conn(user_exists=True, db_exists=False)
 
-    with patch("no8s_postgres.cluster.initialiser.asyncpg.connect", AsyncMock(return_value=conn)):
+    with patch(
+        "no8s_postgres.cluster.initialiser.asyncpg.connect",
+        AsyncMock(return_value=conn),
+    ):
         await ClusterInitialiser(_config()).create_database(
             "10.0.1.10:5432", "myapp", "myapp_user"
         )
@@ -203,7 +203,10 @@ async def test_create_database_closes_conn_on_error():
     conn = _make_conn()
     conn.execute = AsyncMock(side_effect=Exception("pg error"))
 
-    with patch("no8s_postgres.cluster.initialiser.asyncpg.connect", AsyncMock(return_value=conn)):
+    with patch(
+        "no8s_postgres.cluster.initialiser.asyncpg.connect",
+        AsyncMock(return_value=conn),
+    ):
         with pytest.raises(Exception, match="pg error"):
             await ClusterInitialiser(_config()).create_database(
                 "10.0.1.10:5432", "myapp", "myapp_user"
@@ -217,7 +220,8 @@ async def test_create_database_parses_default_port():
     conn = _make_conn()
 
     with patch(
-        "no8s_postgres.cluster.initialiser.asyncpg.connect", AsyncMock(return_value=conn)
+        "no8s_postgres.cluster.initialiser.asyncpg.connect",
+        AsyncMock(return_value=conn),
     ) as mock_connect:
         await ClusterInitialiser(_config()).create_database(
             "10.0.1.10", "myapp", "myapp_user"
@@ -240,9 +244,7 @@ async def test_verify_replication_passes_when_all_streaming():
         _member("node2", role="replica", state="streaming"),
     ]
     initialiser = ClusterInitialiser(_config())
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = AsyncMock(
             return_value=_make_http_response(_cluster_response(members))
@@ -260,9 +262,7 @@ async def test_verify_replication_passes_with_running_replica():
         _member("node1", role="replica", state="running"),
     ]
     initialiser = ClusterInitialiser(_config())
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = AsyncMock(
             return_value=_make_http_response(_cluster_response(members))
@@ -280,9 +280,7 @@ async def test_verify_replication_raises_when_replica_not_streaming():
         _member("node1", role="replica", state="start failed"),
     ]
     initialiser = ClusterInitialiser(_config())
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = AsyncMock(
             return_value=_make_http_response(_cluster_response(members))
@@ -301,9 +299,7 @@ async def test_verify_replication_raises_when_replica_lag_unknown():
         {"name": "node1", "role": "replica", "state": "streaming", "lag": "unknown"},
     ]
     initialiser = ClusterInitialiser(_config())
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = AsyncMock(
             return_value=_make_http_response(_cluster_response(members))
@@ -318,9 +314,7 @@ async def test_verify_replication_raises_when_replica_lag_unknown():
 @pytest.mark.asyncio
 async def test_verify_replication_raises_when_no_endpoint_reachable():
     initialiser = ClusterInitialiser(_config())
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = AsyncMock(side_effect=Exception("refused"))
         MockClient.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -347,9 +341,7 @@ async def test_verify_replication_falls_through_to_second_endpoint():
         return good
 
     initialiser = ClusterInitialiser(_config())
-    with patch(
-        "no8s_postgres.cluster.initialiser.httpx.AsyncClient"
-    ) as MockClient:
+    with patch("no8s_postgres.cluster.initialiser.httpx.AsyncClient") as MockClient:
         client = AsyncMock()
         client.get = fake_get
         MockClient.return_value.__aenter__ = AsyncMock(return_value=client)

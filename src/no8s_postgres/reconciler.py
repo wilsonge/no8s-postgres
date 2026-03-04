@@ -37,15 +37,12 @@ def _trigger_reason(resource: Dict[str, Any]) -> str:
     return "drift_check"
 
 
-def _workflow_inputs(resource: Dict[str, Any], action: Optional[str] = None) -> dict:
-    inputs = {
+def _base_workflow_inputs(resource: Dict[str, Any]) -> dict:
+    return {
         "cluster_name": resource["name"],
         "resource_id": str(resource["id"]),
         "spec_json": json.dumps(resource.get("spec", {})),
     }
-    if action is not None:
-        inputs["action"] = action
-    return inputs
 
 
 def _make_action_ctx(
@@ -83,7 +80,8 @@ async def _run_terraform(
         resource,
         config,
         config.github_workflow,
-        _workflow_inputs(resource, action),
+        _base_workflow_inputs(resource)
+        | {"action": action, "metadata_json": json.dumps(resource.get("metadata", {}))},
     )
     workspace = await plugin.prepare(action_ctx)
     result = await plugin.apply(action_ctx, workspace)
@@ -102,7 +100,7 @@ async def _run_ansible(
         resource,
         config,
         _ANSIBLE_WORKFLOW_FILE,
-        _workflow_inputs(resource),
+        _base_workflow_inputs(resource),
     )
     workspace = await plugin.prepare(action_ctx)
     result = await plugin.apply(action_ctx, workspace)
@@ -205,9 +203,7 @@ class PostgresClusterReconciler(ReconcilerPlugin):
                 patroni_endpoints = resource.get("outputs", {}).get(
                     "patroni_endpoints", []
                 )
-                health_result = await HealthChecker(config).check(
-                    patroni_endpoints
-                )
+                health_result = await HealthChecker(config).check(patroni_endpoints)
                 if health_result.has_drift:
                     needs_apply = True
                     await ctx.set_condition(
@@ -253,8 +249,7 @@ class PostgresClusterReconciler(ReconcilerPlugin):
                     observed_generation=generation,
                 )
                 raise RuntimeError(
-                    "Terraform apply workflow failed: "
-                    f"{apply_result.error_message}"
+                    "Terraform apply workflow failed: " f"{apply_result.error_message}"
                 )
 
             await ctx.set_condition(
@@ -270,11 +265,7 @@ class PostgresClusterReconciler(ReconcilerPlugin):
             token = os.environ.get("GITHUB_TOKEN", "")
             artifacts = apply_result.outputs.get("artifacts", [])
             tf_artifact = next(
-                (
-                    a
-                    for a in artifacts
-                    if a["name"] == _TERRAFORM_OUTPUTS_ARTIFACT
-                ),
+                (a for a in artifacts if a["name"] == _TERRAFORM_OUTPUTS_ARTIFACT),
                 None,
             )
             if not tf_artifact:
@@ -317,9 +308,7 @@ class PostgresClusterReconciler(ReconcilerPlugin):
             db_user: Optional[str] = spec.get("db_user")
             leader_endpoint: str = outputs.get("leader_endpoint", "")
             if db_name and db_user and leader_endpoint:
-                await initialiser.create_database(
-                    leader_endpoint, db_name, db_user
-                )
+                await initialiser.create_database(leader_endpoint, db_name, db_user)
 
             await initialiser.verify_replication(patroni_endpoints)
 
@@ -333,9 +322,7 @@ class PostgresClusterReconciler(ReconcilerPlugin):
             )
 
         except Exception as exc:
-            logger.exception(
-                "Reconciliation failed for resource %d", resource_id
-            )
+            logger.exception("Reconciliation failed for resource %d", resource_id)
             await ctx.update_status(resource_id, "failed", message=str(exc))
             return ReconcileResult(success=False, message=str(exc))
 
@@ -362,18 +349,14 @@ class PostgresClusterReconciler(ReconcilerPlugin):
         resource_id: int = resource["id"]
 
         try:
-            destroy_result = await _run_terraform(
-                "destroy", resource, config, ctx
-            )
+            destroy_result = await _run_terraform("destroy", resource, config, ctx)
             if not destroy_result.success:
                 raise RuntimeError(
                     "Terraform destroy workflow failed: "
                     f"{destroy_result.error_message}"
                 )
         except Exception as exc:
-            logger.exception(
-                "Terraform destroy failed for resource %d", resource_id
-            )
+            logger.exception("Terraform destroy failed for resource %d", resource_id)
             await ctx.update_status(resource_id, "failed", message=str(exc))
             return ReconcileResult(success=False, message=str(exc))
 

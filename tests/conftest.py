@@ -42,9 +42,7 @@ class _ReconcilerContext:
 
     shutdown_event: asyncio.Event
 
-    async def get_resources_needing_reconciliation(
-        self, resource_type_names, limit=10
-    ):
+    async def get_resources_needing_reconciliation(self, resource_type_names, limit=10):
         raise NotImplementedError
 
     async def update_status(
@@ -102,9 +100,7 @@ class _ReconcilerPlugin(ABC):
         pass
 
     @abstractmethod
-    async def reconcile(
-        self, resource: Dict[str, Any], ctx: _ReconcilerContext
-    ):
+    async def reconcile(self, resource: Dict[str, Any], ctx: _ReconcilerContext):
         pass
 
     @abstractmethod
@@ -247,6 +243,7 @@ def sample_resource():
         "observed_generation": 0,
         "status": "pending",
         "deleted_at": None,
+        "metadata": {"environment": "test", "team": "platform"},
         "plugin_config": {},
         "outputs": {},
         "spec": {

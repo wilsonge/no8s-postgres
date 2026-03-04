@@ -30,9 +30,7 @@ class PostgresConfig:
         """Build config from env vars, overridden by plugin_config."""
         cfg = plugin_config or {}
         return cls(
-            aws_region=cfg.get(
-                "aws_region", os.environ.get("AWS_REGION", "eu-west-1")
-            ),
+            aws_region=cfg.get("aws_region", os.environ.get("AWS_REGION", "eu-west-1")),
             tf_state_bucket=cfg.get(
                 "tf_state_bucket", os.environ.get("TF_STATE_BUCKET", "")
             ),
@@ -62,12 +60,8 @@ class PostgresConfig:
                     os.environ.get("RECONCILE_POLL_INTERVAL", 30),
                 )
             ),
-            github_repo=cfg.get(
-                "github_repo", os.environ.get("GITHUB_REPO", "")
-            ),
-            github_ref=cfg.get(
-                "github_ref", os.environ.get("GITHUB_REF", "main")
-            ),
+            github_repo=cfg.get("github_repo", os.environ.get("GITHUB_REPO", "")),
+            github_ref=cfg.get("github_ref", os.environ.get("GITHUB_REF", "main")),
             github_workflow=cfg.get(
                 "github_workflow",
                 os.environ.get("GITHUB_WORKFLOW", "terraform.yml"),

@@ -98,7 +98,7 @@ jobs:
           ANSIBLE_RETRY_FILES_ENABLED: "False"
         run: |
           EXTRA_VARS=$(python3 -c "
-          import json, os, sys
+          import json, os
           spec = json.loads(os.environ['SPEC_JSON'])
           spec['cluster_name'] = os.environ['CLUSTER_NAME']
           print(json.dumps(spec))

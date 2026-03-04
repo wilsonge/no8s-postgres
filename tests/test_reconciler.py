@@ -1,6 +1,7 @@
 """Tests for PostgresClusterReconciler."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,8 +17,7 @@ def _action_result(success=True, error_message=None, artifacts=None):
             {
                 "name": "terraform-outputs",
                 "archive_download_url": (
-                    "https://api.github.com/repos/org/repo"
-                    "/actions/artifacts/1/zip"
+                    "https://api.github.com/repos/org/repo" "/actions/artifacts/1/zip"
                 ),
             }
         ]
@@ -69,9 +69,7 @@ async def test_start_loop_shuts_down(mock_ctx):
 
 
 @pytest.mark.asyncio
-async def test_reconcile_no_changes_when_generation_matches(
-    mock_ctx, sample_resource
-):
+async def test_reconcile_no_changes_when_generation_matches(mock_ctx, sample_resource):
     """generation == observed_generation, status ready, no drift → requeue."""
     sample_resource["generation"] = 5
     sample_resource["observed_generation"] = 5
@@ -103,9 +101,7 @@ async def test_reconcile_no_changes_when_generation_matches(
 
 
 @pytest.mark.asyncio
-async def test_reconcile_marks_reconciling_then_ready(
-    mock_ctx, sample_resource
-):
+async def test_reconcile_marks_reconciling_then_ready(mock_ctx, sample_resource):
     """New resource (generation=1, observed=0) triggers GHA apply → ready."""
     r = PostgresClusterReconciler()
 
@@ -120,9 +116,7 @@ async def test_reconcile_marks_reconciling_then_ready(
     # First call: terraform apply (returns TF outputs artifact).
     # Second call: ansible workflow (returns simple success).
     ansible_result = _action_result(success=True, artifacts=[])
-    plugin.apply = AsyncMock(
-        side_effect=[_action_result(), ansible_result]
-    )
+    plugin.apply = AsyncMock(side_effect=[_action_result(), ansible_result])
 
     with (
         patch(
@@ -151,13 +145,14 @@ async def test_reconcile_marks_reconciling_then_ready(
     tf_ctx = plugin.apply.call_args_list[0][0][0]
     assert tf_ctx.spec["inputs"]["action"] == "apply"
     assert tf_ctx.spec["inputs"]["cluster_name"] == sample_resource["name"]
+    assert "metadata_json" in tf_ctx.spec["inputs"]
+    assert json.loads(tf_ctx.spec["inputs"]["metadata_json"]) == sample_resource["metadata"]
 
     # Second plugin call: ansible workflow
     ansible_ctx = plugin.apply.call_args_list[1][0][0]
     assert ansible_ctx.spec["workflow"] == "ansible.yml"
-    assert (
-        ansible_ctx.spec["inputs"]["cluster_name"] == sample_resource["name"]
-    )
+    assert ansible_ctx.spec["inputs"]["cluster_name"] == sample_resource["name"]
+    assert "metadata_json" not in ansible_ctx.spec["inputs"]
 
     init_instance.wait_for_quorum.assert_called_once()
     init_instance.create_database.assert_called_once()
@@ -253,9 +248,7 @@ async def test_reconcile_sets_conditions_on_success(mock_ctx, sample_resource):
     assert result.success is True
 
     def _cond(type_):
-        return next(
-            (c for c in mock_ctx.conditions if c["type"] == type_), None
-        )
+        return next((c for c in mock_ctx.conditions if c["type"] == type_), None)
 
     infra = _cond("InfrastructureProvisioned")
     assert infra is not None
@@ -329,9 +322,7 @@ async def test_reconcile_sets_ansible_condition_false_on_ansible_failure(
     assert result.success is False
 
     def _cond(type_):
-        return next(
-            (c for c in mock_ctx.conditions if c["type"] == type_), None
-        )
+        return next((c for c in mock_ctx.conditions if c["type"] == type_), None)
 
     infra = _cond("InfrastructureProvisioned")
     assert infra is not None
@@ -344,9 +335,7 @@ async def test_reconcile_sets_ansible_condition_false_on_ansible_failure(
 
 
 @pytest.mark.asyncio
-async def test_reconcile_sets_cluster_healthy_on_no_drift(
-    mock_ctx, sample_resource
-):
+async def test_reconcile_sets_cluster_healthy_on_no_drift(mock_ctx, sample_resource):
     """When status=ready and no drift, ClusterHealthy=True is set."""
     sample_resource["generation"] = 3
     sample_resource["observed_generation"] = 3
@@ -397,9 +386,7 @@ async def test_reconcile_sets_cluster_healthy_false_on_health_drift(
     plan_result = _action_result(success=True)
     apply_result = _action_result()
     ansible_result = _action_result(success=True, artifacts=[])
-    plugin.apply = AsyncMock(
-        side_effect=[plan_result, apply_result, ansible_result]
-    )
+    plugin.apply = AsyncMock(side_effect=[plan_result, apply_result, ansible_result])
 
     r = PostgresClusterReconciler()
 

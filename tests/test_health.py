@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from no8s_postgres.cluster.health import HealthChecker, HealthResult
+from no8s_postgres.cluster.health import HealthChecker
 from no8s_postgres.config import PostgresConfig
 
 

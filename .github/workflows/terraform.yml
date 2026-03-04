@@ -23,6 +23,11 @@ on:
         description: "PostgresCluster spec serialised as JSON"
         required: true
         type: string
+      metadata_json:
+        description: "PostgresCluster resource metadata (key-value pairs) serialised as JSON"
+        required: false
+        type: string
+        default: "{}"
 
 permissions:
   id-token: write   # required for OIDC
@@ -55,12 +60,17 @@ jobs:
         env:
           SPEC_JSON: ${{ inputs.spec_json }}
           CLUSTER_NAME: ${{ inputs.cluster_name }}
+          METADATA_JSON: ${{ inputs.metadata_json }}
         run: |
           python3 << 'EOF'
           import json, os
 
           spec = json.loads(os.environ["SPEC_JSON"])
           cluster_name = os.environ["CLUSTER_NAME"]
+          metadata = json.loads(os.environ.get("METADATA_JSON", "{}") or "{}")
+
+          # Resource metadata is merged into tags (user spec tags take precedence)
+          tags = {**metadata, **spec.get("tags", {})}
 
           tfvars = {
             "cluster_name":     cluster_name,
@@ -73,7 +83,7 @@ jobs:
             "vpc_cidr":         spec.get("vpc_cidr", "10.0.0.0/16"),
             "allowed_cidrs":    spec.get("allowed_cidrs", []),
             "ssh_key_name":     spec.get("ssh_key_name", ""),
-            "tags":             spec.get("tags", {}),
+            "tags":             tags,
           }
 
           with open("terraform.tfvars.json", "w") as f:

@@ -70,12 +70,7 @@ curl -X POST http://localhost:8000/api/v1/resource-types \
         "backup_retention_days": {"type": "integer", "default": 7, "minimum": 1},
         "pgbouncer_enabled": {"type": "boolean", "default": true},
         "pgbouncer_pool_size": {"type": "integer", "default": 20, "minimum": 1},
-        "ssh_key_name": {"type": "string"},
-        "tags": {
-          "type": "object",
-          "additionalProperties": {"type": "string"},
-          "default": {}
-        }
+        "ssh_key_name": {"type": "string"}
       }
     }
   }'
@@ -137,7 +132,6 @@ the `no8s-postgres` finalizer, and immediately queues the resource for reconcili
 | `pgbouncer_enabled`     | boolean          | `true`          | Deploy PgBouncer connection pooler                |
 | `pgbouncer_pool_size`   | integer          | `20`            | PgBouncer pool size per database                  |
 | `ssh_key_name`          | string           | —               | AWS EC2 key pair name for SSH access              |
-| `tags`                  | object           | `{}`            | Extra AWS tags applied to all EC2 resources       |
 
 ### Minimal example
 
@@ -180,11 +174,7 @@ curl -X POST http://localhost:8000/api/v1/resources \
       "backup_enabled": true,
       "backup_retention_days": 14,
       "pgbouncer_enabled": true,
-      "pgbouncer_pool_size": 50,
-      "tags": {
-        "Environment": "production",
-        "Team": "platform"
-      }
+      "pgbouncer_pool_size": 50
     }
   }'
 ```
